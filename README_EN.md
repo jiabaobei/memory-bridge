@@ -73,6 +73,17 @@ membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge doctor
 ```
 
+The passphrase can also come from the `MEMBRIDGE_PASSPHRASE` environment variable.
+
+**Recovering a lost channel.** `publish` only sends memories that are not yet marked
+as published locally. If the delta packets are deleted on the cloud side (or a sync
+failure empties the channel), the local record still says "published", so a plain
+`publish` reports nothing to do. Use `--force` to rebuild the channel from scratch:
+
+```bash
+membridge publish --dir "..." --force
+```
+
 MCP clients (Cursor `mcp.json`):
 
 ```json

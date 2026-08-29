@@ -152,3 +152,99 @@ def test_passphrase_cryptor_roundtrip():
     token = c.encrypt("机密内容")
     assert "机密" not in token
     assert PassphraseCryptor("口令", salt=b"0123456789abcdef").decrypt(token) == "机密内容"
+
+
+def test_publish_force_rebuilds_channel_after_loss():
+    """云盘侧差分包丢失后，普通 publish 会认为「已发布」而拒绝；--force 必须能重建。
+
+    真实故障：OneDrive 同步清空了 outbox，本地 published_fps 仍在，记忆被永久锁死。
+    """
+    a = _store(DEV1)
+    _add(a, (COFFEE, LATTE))
+    ch = _channel()
+    ta = transport.FolderTransport(ch, a)
+    first = ta.publish(plaintext=True)
+    assert first is not None
+
+    # 模拟云盘侧文件丢失
+    os.remove(first)
+    assert not os.listdir(os.path.join(ch, "outbox"))
+
+    # 不 force：本地仍认为已发布 → 拒绝重发
+    assert ta.publish(plaintext=True) is None
+    # force：重建全量
+    rebuilt = ta.publish(plaintext=True, force=True)
+    assert rebuilt is not None
+    delta = transport.Delta.from_json(open(rebuilt, encoding="utf-8").read())
+    assert len(delta.nodes) == 2
+    a.close()
+
+
+def test_publish_force_is_idempotent_when_nothing_new():
+    """force 只是忽略「已发布」记录，内容仍由差分包本身决定，不会凭空造包。"""
+    a = _store(DEV1)
+    _add(a, (COFFEE,))
+    ch = _channel()
+    ta = transport.FolderTransport(ch, a)
+    assert ta.publish(plaintext=True) is not None
+    # 第一次 force：文件仍在通道里，内容已发布过 → 仍会重发（force 语义）
+    assert ta.publish(plaintext=True, force=True) is not None
+    a.close()
+
+
+def test_fetch_three_devices_all_receive_same_package():
+    """三台以上设备：先取的设备把包移入 archive，后续设备必须仍能补取。"""
+    a = _store(DEV1)
+    _add(a, (COFFEE, LATTE))
+    ch = _channel()
+    transport.FolderTransport(ch, a).publish(plaintext=True)
+
+    peers = [_store(f"设备{i}") for i in "BCD"]
+    for p in peers:
+        tp = transport.FolderTransport(ch, p)
+        result = tp.fetch()
+        # 每个包只应被处理一次（不能因扫了 archive 而重复计数）
+        assert len(result["applied"]) == 1, f"{p.device_name} 处理了 {len(result['applied'])} 次"
+        assert p.stats()["nodes"] == 2
+
+    # 取完后包应停留在 archive，供后续新设备继续补取
+    assert os.listdir(os.path.join(ch, "archive"))
+    a.close()
+    for p in peers:
+        p.close()
+
+
+def test_fetch_missing_passphrase_message_is_actionable():
+    """未提供口令时，提示必须说清怎么补，而不是干巴巴一句。"""
+    a = _store(DEV1)
+    _add(a, (COFFEE,))
+    ch = _channel()
+    transport.FolderTransport(ch, a).publish(passphrase="正确口令")
+
+    b = _store(DEV2)
+    result = transport.FolderTransport(ch, b).fetch()
+    assert result["applied"] == []
+    reason = result["skipped"][0][1]
+    assert "PASSPHRASE" in reason, reason  # 必须指名环境变量
+    a.close()
+    b.close()
+
+
+def test_fetch_wrong_passphrase_message_is_actionable():
+    """口令错误时，提示必须区分于「未提供」，并给出 show-passphrase 指引。"""
+    if not HAS_CRYPTO:
+        print("\nSKIP: 未安装 cryptography")
+        return
+    a = _store(DEV1)
+    _add(a, (COFFEE,))
+    ch = _channel()
+    transport.FolderTransport(ch, a).publish(passphrase="正确口令")
+
+    b = _store(DEV2)
+    result = transport.FolderTransport(ch, b).fetch(passphrase="错误口令")
+    assert result["applied"] == []
+    reason = result["skipped"][0][1]
+    assert "口令不匹配" in reason, reason
+    assert "show-passphrase" in reason, reason
+    a.close()
+    b.close()

@@ -199,11 +199,21 @@ class FolderTransport:
                     if env.get("fmt") != ENVELOPE_FMT:
                         raise ValueError("未知信封格式")
                     if not passphrase:
-                        raise ValueError("已加密的差分包需要口令")
+                        raise ValueError(
+                            "已加密的差分包需要口令：请加 --passphrase，"
+                            "或设置环境变量 MEMBRIDGE_PASSPHRASE"
+                        )
                     cryptor = PassphraseCryptor(
                         passphrase, salt=bytes.fromhex(env["salt"])
                     )
-                    payload = cryptor.decrypt(env["token"])
+                    try:
+                        payload = cryptor.decrypt(env["token"])
+                    except Exception:
+                        # Fernet 抛 InvalidToken，对用户毫无信息量；换成可操作的提示
+                        raise ValueError(
+                            f"口令不匹配，无法解密 {fn}：发布端与接收端必须使用同一口令，"
+                            "可用 membridge show-passphrase 查看本机口令"
+                        ) from None
                 else:
                     payload = raw
                 delta = Delta.from_json(payload)

@@ -2,6 +2,17 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.6.1] - 2026-08-29
+
+补齐 v0.6.0 遗漏的文档与测试，并让口令类报错说人话。
+
+- 文档补齐：`publish --force` 的用法与补救场景写入 README / README_EN
+  （v0.6.0 已带上该功能却未记录）
+- 口令报错可操作：区分「未提供口令」（指名 `MEMBRIDGE_PASSPHRASE`）与
+  「口令不匹配」（指引 `membridge show-passphrase`），不再只抛 Fernet 的 InvalidToken
+- 新增 5 项测试覆盖 force 重发、force 幂等、三设备补取、两类口令报错
+- 测试 36 → 41 项
+
 ## [0.6.0] - 2026-08-29
 
 口令零负担：同步口令由系统自动生成并托管，用户彻底不用设置、不用记忆。

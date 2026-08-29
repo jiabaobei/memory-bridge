@@ -101,6 +101,19 @@ membridge stats                                         # 记忆库概况
 membridge doctor                                        # 环境自检
 ```
 
+口令也可由环境变量 `MEMBRIDGE_PASSPHRASE` 提供，免得每次手输。
+
+#### 云盘差分包丢失时的补救
+
+`publish` 只发送「本地记录中尚未发布过」的记忆。若云盘侧差分包被误删、
+或同步故障清空了通道，本地仍认为已发布——此时：
+
+```bash
+membridge publish --dir "..." --force    # 忽略本地记录，重发全量重建通道
+```
+
+不加 `--force` 会输出「没有需要发布的新记忆。」，这是幂等表现，不是故障。
+
 ### 手动接入 MCP 客户端（`membridge init` 已覆盖的平台可跳过）
 
 个别平台如需手动配置，Claude Code：
