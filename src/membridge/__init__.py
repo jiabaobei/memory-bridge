@@ -18,7 +18,7 @@ from .embeddings import HashingEmbedder, OpenAIEmbedder, cosine
 from .node import MemoryNode
 from .store import MemoryStore
 from .san import build_edges
-from . import dss, heat, injection, privacy
+from . import dss, heat, injection, privacy, transport
 
 __version__ = "0.1.0"
 
@@ -33,4 +33,5 @@ __all__ = [
     "heat",
     "injection",
     "privacy",
+    "transport",
 ]

@@ -77,23 +77,64 @@ def compute_delta(
     eps: float = EPSILON,
 ) -> Delta:
     """计算 local → remote 的差异子图（纯本地计算，可直接单机双库模拟）。"""
-    gate = allowed if allowed is not None else (lambda n: preload_allowed(n))
-    remote_fps = {fingerprint(n.content) for n in remote.all_nodes()}
+    return _delta_against(
+        local,
+        remote_fps={fingerprint(n.content) for n in remote.all_nodes()},
+        remote_node_ids={n.node_id for n in remote.all_nodes()},
+        remote_edge_weight=remote.edge_weight,
+        allowed=allowed,
+        eps=eps,
+        to_device=remote.device_name,
+    )
 
-    delta = Delta(from_device=local.device_name, to_device=remote.device_name)
+
+def delta_unsent(
+    local: MemoryStore,
+    published_fps: set,
+    allowed: Optional[Callable[[MemoryNode], bool]] = None,
+    eps: float = EPSILON,
+) -> Delta:
+    """计算本设备"尚未发布过"的差异包（网盘中转通道使用）。
+
+    published_fps 为本设备已向通道发布过的节点指纹集合（由调用方持久化，
+    见 transport.FolderTransport）。远端节点集合未知，因此边只随新节点
+    一起发布；接收端按指纹去重，重复接收亦幂等。
+    """
+    return _delta_against(
+        local,
+        remote_fps=set(published_fps),
+        remote_node_ids=set(),
+        remote_edge_weight=None,
+        allowed=allowed,
+        eps=eps,
+        to_device="*",
+    )
+
+
+def _delta_against(
+    local: MemoryStore,
+    remote_fps: set,
+    remote_node_ids: set,
+    remote_edge_weight: Optional[Callable[[str, str], Optional[float]]],
+    allowed: Optional[Callable[[MemoryNode], bool]],
+    eps: float,
+    to_device: str,
+) -> Delta:
+    gate = allowed if allowed is not None else (lambda n: preload_allowed(n))
+    delta = Delta(from_device=local.device_name, to_device=to_device)
+
     for n in local.all_nodes():
         if not gate(n):
             continue
         if fingerprint(n.content) not in remote_fps:
             delta.nodes.append(n.to_dict())
 
-    remote_node_ids = {n.node_id for n in remote.all_nodes()}
-    new_ids = {d["node_id"] for d in delta.nodes}
-    known_target = remote_node_ids | new_ids  # 新节点随差分包一起到达，其关联边可先行同步
+    # 边差分：两端点在接收端"已知"（已存在或随本次差分到达）且差异超 ε 才同步
+    known_target = set(remote_node_ids) | {d["node_id"] for d in delta.nodes}
     for src, dst, w in local.all_edges():
         if src not in known_target or dst not in known_target:
-            continue  # 边必须挂在接收端已知（或随本次到达）的节点上
-        rw = remote.edge_weight(src, dst)
+            continue
+        rw = remote_edge_weight(src, dst) if remote_edge_weight else None
         if rw is None or abs(rw - w) > eps:
             delta.edges.append((src, dst, w))
     return delta

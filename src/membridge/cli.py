@@ -18,7 +18,7 @@ import json
 import sys
 from typing import List, Optional
 
-from . import dss, heat, injection
+from . import dss, heat, injection, privacy, transport
 from .embeddings import HashingEmbedder
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
@@ -119,6 +119,39 @@ def cmd_apply(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_publish(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    if not args.passphrase and not args.plaintext:
+        print("出于隐私安全，写入网盘默认必须加密：请加 --passphrase <口令>，"
+              "或显式加 --plaintext 放弃加密（不推荐）。")
+        return 2
+    tr = transport.FolderTransport(args.dir, store)
+    try:
+        path = tr.publish(passphrase=args.passphrase, plaintext=args.plaintext)
+    except ImportError as exc:
+        print(str(exc))
+        return 2
+    if path is None:
+        print("没有需要发布的新记忆。")
+    else:
+        print(f"差分包已写入通道：{path}")
+    return 0
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    store = _open_store(args)
+    tr = transport.FolderTransport(args.dir, store)
+    result = tr.fetch(passphrase=args.passphrase)
+    for fn, src, r in result["applied"]:
+        print(f"已并入来自 {src} 的差分包 {fn}："
+              f"新增节点 {r['nodes_added']}，去重跳过 {r['nodes_skipped']}，应用边 {r['edges_applied']}")
+    for fn, reason in result["skipped"]:
+        print(f"跳过 {fn}：{reason}")
+    if not result["applied"] and not result["skipped"]:
+        print("通道中暂无新差分包。")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     store = _open_store(args)
     for key, value in store.stats().items():
@@ -173,6 +206,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("apply", help="把 DSS 差异包并入本库")
     p.add_argument("file", help="差异包 JSON 文件")
     p.set_defaults(func=cmd_apply)
+
+    p = sub.add_parser("publish", help="把本设备未发布的记忆差分包写入同步文件夹（网盘中转）")
+    p.add_argument("--dir", required=True, help="同步文件夹（百度网盘同步盘/坚果云/OneDrive/U盘/局域网共享）")
+    p.add_argument("--passphrase", default=None, help="端到端加密口令（推荐，收发需一致）")
+    p.add_argument("--plaintext", action="store_true", help="明文写入（不推荐，需显式确认）")
+    p.set_defaults(func=cmd_publish)
+
+    p = sub.add_parser("fetch", help="从同步文件夹取回并应用其他设备的差分包")
+    p.add_argument("--dir", required=True)
+    p.add_argument("--passphrase", default=None, help="端到端加密口令（与发布端一致）")
+    p.set_defaults(func=cmd_fetch)
 
     p = sub.add_parser("stats", help="记忆库统计")
     p.set_defaults(func=cmd_stats)

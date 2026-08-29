@@ -7,18 +7,27 @@
 import os
 import sys
 import traceback
+import importlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-import test_core  # noqa: E402
+MODULES = ["test_core", "test_transport"]
 
 
 def main() -> int:
-    tests = [
-        fn
-        for name, fn in vars(test_core).items()
-        if name.startswith("test_") and callable(fn)
-    ]
+    tests = []
+    for mod_name in MODULES:
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError as exc:
+            print(f"FAIL  加载 {mod_name}: {exc}")
+            return 1
+        tests.extend(
+            fn
+            for name, fn in vars(mod).items()
+            if name.startswith("test_") and callable(fn)
+        )
     failed = 0
     for fn in tests:
         try:

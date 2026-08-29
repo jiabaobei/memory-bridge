@@ -22,7 +22,7 @@
 2. **边缘预加载**：在你打开新设备之前，高热度的记忆已经被推送到位——切换即连续，而不是切换后等待检索。
 3. **内容冻结原则**：记忆桥只提取语义关联、只调节结构参数，**永不改写你的原始记忆内容**。这正是论文所依据的 Faulty Memory 研究的结论：让 LLM 自动改写/摘要记忆，必然引入幻觉式失真。
 
-同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用。
+同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
 ## 当前能力（v0.1）
 
@@ -31,7 +31,8 @@
 | SAN 语义关联网络 | 记忆条目 + 语义向量 + 关联边（`w_ij = λ·共现 + (1-λ)·余弦`） | ✅ v0 已实现 |
 | Path A 记忆注入 | 高置信记忆序列化为上下文块拼入 prompt（显式、可审计） | ✅ v0 已实现 |
 | MCP Server | 跨平台接入：Claude Code / Cursor / Cline 等即插即用 | ✅ v0 已实现 |
-| DSS 增量同步 | 语义指纹 + 边差异量化（ε=0.01），只传差异不传全量 | ✅ 本地差分已实现；E2E 传输 Phase 2 |
+| DSS 增量同步 | 语义指纹 + 边差异量化（ε=0.01），只传差异不传全量 | ✅ 已实现 |
+| 网盘中转传输 | 差分包写入百度网盘同步盘/坚果云/OneDrive 等同步文件夹即可跨设备，默认端到端加密，网盘服务商只见密文 | ✅ v0 已实现 |
 | PAMS 隐私门控 | L1 迁移标签（local 节点永不离开设备）+ L2 场景域隔离 | ✅ v0 已实现；L3 差分隐私后置 |
 | TMT 热度与预加载 | recency × frequency 启发式，热度 Top-K 预加载候选 | ✅ v0 启发式；边缘驻留 Phase 3 |
 | AEE 自适应进化 | α/π_nav/θ_window 等结构参数自适应 | 📋 Phase 4（接口已预留） |
@@ -46,6 +47,19 @@
 | 切换前**预加载**（零等待） | ✅ | ❌ 被动检索 | ❌ |
 | **内容冻结**（不重写记忆） | ✅ 架构级约束 | ❌ LLM 摘要改写 | 部分 |
 | 隐私分级（迁移标签 + 场景域） | ✅ | 部分 | ❌ |
+
+## 平台覆盖（跨平台记忆共享）
+
+| 接入方式 | 覆盖的平台 | 状态 |
+|---|---|---|
+| **MCP 协议** | Claude Code、Cursor、Cline，以及支持 MCP 的国内平台（字节 TRAE、阿里通义灵码、扣子 Coze 等） | ✅ v0 |
+| **CLI / SDK** | 任意能调用命令行的环境；WorkBuddy 等技能型平台可通过技能脚本调用 `membridge`（与 [skills-constitution](https://github.com/jiabaobei/skills-constitution) 生态天然衔接） | ✅ v0 |
+| **WorkBuddy 专用技能** | 面向 WorkBuddy 的记忆技能包（自动注入 / 自动采集） | 📋 规划中 |
+| **浏览器插件** | 豆包、Kimi、ChatGPT 网页版等暂不支持外部记忆接入的 Web 助手 | 📋 Phase 1+ |
+| **HTTP 网关** | 支持自定义 OpenAI 兼容端点 / 工具调用的应用 | 📋 Phase 2 |
+
+> 对完全封闭、不支持任何外部接入的 App，兜底方案是"剪贴板/分享"通道
+> （`membridge context` 复制粘贴），永远可用。
 
 ## 快速开始
 
@@ -65,6 +79,8 @@ membridge context "继续早上的讨论"                       # 输出 Path A 
 membridge preload 我的手机                               # 预加载候选（PAMS 门控）
 membridge delta phone.db --out delta.json               # 生成到另一设备的差分包
 membridge apply delta.json                              # 并入差分包
+membridge publish --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 发到网盘通道
+membridge fetch   --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 从网盘取回
 membridge stats
 ```
 
@@ -109,7 +125,8 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
    │                                                                      │
    │        PAMS 三级隐私隔离（贯穿所有阶段的数据出口）                       │
    └──────────────────────────────────┬───────────────────────────────────┘
-                                      │ DSS 差分包（Phase 2 起端到端加密）
+                                      │ DSS 差分包（默认端到端加密）
+                                      │ 通道：网盘中转 ✅ / 局域网直连 / 实时中继（Phase 2）
                         ┌─────────────▼──────────┐
                         │  本设备记忆库（SQLite）   │◀──▶ 手机 / 平板 / 边缘网关
                         └────────────────────────┘

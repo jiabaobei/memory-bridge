@@ -17,7 +17,16 @@ MemoryBridge takes a different position:
 2. **Edge preloading** — before you even open the new device, hot memories are already pushed there. Switching is continuous instead of "switch, then wait for retrieval".
 3. **Content freezing** — MemoryBridge only extracts associations and tunes structural parameters; it **never rewrites your raw memory content**. Per the Faulty Memory line of research, letting an LLM auto-abstract/rewrite memory inevitably injects hallucinated distortion.
 
-And it is **cross-platform**: via MCP, one memory store is shared by Claude Code, Cursor, Cline, and any MCP client.
+And it is **cross-platform**: via MCP, one memory store is shared by Claude Code, Cursor, Cline, and any MCP client. See the coverage matrix in the [Chinese README](README.md).
+
+### Platform coverage
+
+| Channel | Platforms | Status |
+|---|---|---|
+| MCP | Claude Code, Cursor, Cline, and MCP-capable CN platforms (ByteDance TRAE, Alibaba Lingma, Coze, …) | ✅ |
+| CLI / SDK | Any scriptable environment; skill-based platforms like WorkBuddy can shell out to `membridge` | ✅ |
+| Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
+| HTTP gateway | Apps with custom OpenAI-compatible endpoints / tool calling | 📋 |
 
 ## Status (v0.1)
 
@@ -26,7 +35,8 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | SAN (semantic association network, `w_ij = λ·co-occurrence + (1−λ)·cosine`) | ✅ implemented |
 | Path A injection (auditable context block) | ✅ implemented |
 | MCP server (Add / Search / Preload only) | ✅ implemented |
-| DSS delta sync (semantic fingerprints, edge-quantization ε=0.01) | ✅ local diff done; E2E transport in Phase 2 |
+| DSS delta sync (semantic fingerprints, edge-quantization ε=0.01) | ✅ implemented |
+| Netdisk-folder transport | Point the publisher at any synced folder (Baidu Netdisk, Jianguoyun, OneDrive, USB, LAN share); delta packets are end-to-end encrypted by default — the provider only ever sees ciphertext | ✅ implemented |
 | PAMS privacy gates (L1 migration tags + L2 scene domains) | ✅ implemented; L3 DP deferred |
 | TMT heat & preloading (recency × frequency heuristic) | ✅ heuristic done; edge tiers in Phase 3 |
 | AEE adaptive evolution (α / π_nav / θ_window) | 📋 Phase 4 (interfaces reserved) |
