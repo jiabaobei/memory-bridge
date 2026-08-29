@@ -159,11 +159,36 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_mcp(args: argparse.Namespace) -> int:  # noqa: ARG001
+def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import main as mcp_main
 
-    mcp_main()
+    mcp_main(
+        host=args.host if args.http else None,
+        port=args.port if args.http else None,
+        transport=args.transport if args.http else "stdio",
+    )
     return 0
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    from .wizard import InitOptions, run_init
+
+    # 全局 --db 的默认值是 "membridge.db"；init 在未显式指定时应走智能默认
+    db = args.db if args.db != "membridge.db" else None
+    return run_init(
+        InitOptions(
+            db=db,
+            device=args.device,
+            netdisk_dir=args.netdisk_dir,
+            all_mode=args.all,
+        )
+    )
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: ARG001
+    from .doctor import run_doctor
+
+    return run_doctor()
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -222,7 +247,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.set_defaults(func=cmd_stats)
 
     p = sub.add_parser("mcp", help="启动 MCP server（供 Claude Code / Cursor 等接入）")
+    p.add_argument("--http", action="store_true",
+                   help="以远程 HTTP 模式运行（SSE/Streamable HTTP，供扣子 Coze 等平台经 URL 接入）")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--transport", default="streamable-http",
+                   choices=["streamable-http", "sse"])
     p.set_defaults(func=cmd_mcp)
+
+    p = sub.add_parser("init",
+                       help="一键接入本机检测到的 AI 平台（MCP 自动配置 / WorkBuddy 技能 / 可选网盘）")
+    p.add_argument("--all", action="store_true",
+                   help="非交互：配置所有检测到的平台，并打印其余平台的手动指南")
+    p.add_argument("--netdisk-dir", default=None,
+                   help="直接指定网盘/同步文件夹路径（跳过询问）")
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("doctor", help="环境自检：版本 / 记忆库 / 可选依赖 / 平台检测")
+    p.set_defaults(func=cmd_doctor)
 
     args = parser.parse_args(argv)
     return args.func(args)

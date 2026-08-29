@@ -25,10 +25,11 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 
 | Channel | Platforms | Status |
 |---|---|---|
-| MCP | Claude Code, Cursor, Cline, and MCP-capable CN platforms (ByteDance TRAE, Alibaba Lingma, Coze, …) | ✅ |
-| CLI / SDK | Any scriptable environment; skill-based platforms like WorkBuddy can shell out to `membridge` | ✅ |
+| `membridge init` auto-config (MCP) | ZCode, Claude Code, Claude Desktop, Cursor, Cline, Windsurf, VS Code (Copilot), Gemini CLI, Qwen Code | ✅ |
+| init skill install (SKILL.md) | WorkBuddy (`~/.workbuddy/skills`), Claude skills dir | ✅ |
+| Remote MCP (HTTP mode) | Coze and other remote-MCP platforms via `membridge mcp --http` | ✅ |
+| Manual guides | ByteDance TRAE and UI-based MCP clients (init prints steps) | ✅ |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
-| HTTP gateway | Apps with custom OpenAI-compatible endpoints / tool calling | 📋 |
 
 ## Status (v0.1)
 

@@ -31,7 +31,12 @@ def open_store(store_path: Optional[str] = None) -> MemoryStore:
     return store
 
 
-def create_server(store_path: Optional[str] = None, embedder: Optional[Embedder] = None):
+def create_server(
+    store_path: Optional[str] = None,
+    embedder: Optional[Embedder] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+):
     try:
         from mcp.server.fastmcp import FastMCP  # 延迟导入，保持核心零依赖
     except ImportError as exc:
@@ -42,7 +47,12 @@ def create_server(store_path: Optional[str] = None, embedder: Optional[Embedder]
     store = open_store(store_path)
     embedder = embedder or HashingEmbedder()
 
-    mcp = FastMCP("memory-bridge")
+    settings = {}
+    if host:
+        settings["host"] = host
+    if port:
+        settings["port"] = port
+    mcp = FastMCP("memory-bridge", **settings)
 
     @mcp.tool()
     def memory_add(text: str, tags: str = "", migration: str = "") -> str:
@@ -94,8 +104,14 @@ def create_server(store_path: Optional[str] = None, embedder: Optional[Embedder]
     return mcp
 
 
-def main() -> None:
-    create_server().run()
+def main(host: Optional[str] = None, port: Optional[int] = None,
+         transport: str = "stdio") -> None:
+    settings = {}
+    if host:
+        settings["host"] = host
+    if port:
+        settings["port"] = port
+    create_server(**settings).run(transport=transport)
 
 
 if __name__ == "__main__":

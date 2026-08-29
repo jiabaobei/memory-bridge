@@ -2,6 +2,18 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.0] - 2026-08-29
+
+新增 `membridge init` 一键接入向导：用户装完即让本机所有主流 AI 平台具备跨应用记忆共享。
+
+- 平台自动配置（检测到即接入、幂等安全）：ZCode、Claude Code、Claude 桌面版、Cursor、
+  Cline、Windsurf、VS Code（Copilot MCP）、Gemini CLI、通义千问 Code
+- 技能型平台：自动安装记忆技能（SKILL.md）到 WorkBuddy（`~/.workbuddy/skills`）
+  与 Claude 技能目录 —— WorkBuddy 正式支持
+- 远程 MCP：`membridge mcp --http`（SSE / Streamable HTTP），扣子 Coze 等平台经 URL 接入
+- 手动指南：字节 Trae 等界面化平台由 init 打印逐步指引
+- 新增 `membridge doctor` 环境自检；核心零依赖不变，测试增至 19 项
+
 ## [0.1.1] - 2026-08-29
 
 修复：mcp 2.x 将 FastMCP 更名为 MCPServer，导致 MCP 服务器无法构建。

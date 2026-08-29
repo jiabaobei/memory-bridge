@@ -51,13 +51,16 @@
 
 ## 平台覆盖（跨平台记忆共享）
 
+用户只需运行 **`membridge init`**：自动检测本机已安装的平台并接入（幂等安全，重复执行无副作用）。
+
 | 接入方式 | 覆盖的平台 | 状态 |
 |---|---|---|
-| **MCP 协议** | Claude Code、Cursor、Cline，以及支持 MCP 的国内平台（字节 TRAE、阿里通义灵码、扣子 Coze 等） | ✅ v0 |
-| **CLI / SDK** | 任意能调用命令行的环境；WorkBuddy 等技能型平台可通过技能脚本调用 `membridge`（与 [skills-constitution](https://github.com/jiabaobei/skills-constitution) 生态天然衔接） | ✅ v0 |
-| **WorkBuddy 专用技能** | 面向 WorkBuddy 的记忆技能包（自动注入 / 自动采集） | 📋 规划中 |
-| **浏览器插件** | 豆包、Kimi、ChatGPT 网页版等暂不支持外部记忆接入的 Web 助手 | 📋 Phase 1+ |
-| **HTTP 网关** | 支持自定义 OpenAI 兼容端点 / 工具调用的应用 | 📋 Phase 2 |
+| **init 自动配置（MCP）** | ZCode、Claude Code、Claude 桌面版、Cursor、Cline、Windsurf、VS Code（Copilot MCP）、Gemini CLI、通义千问 Code | ✅ v0.2 |
+| **init 技能自动安装（SKILL.md）** | WorkBuddy（`~/.workbuddy/skills`）、Claude 技能目录 | ✅ v0.2 |
+| **远程 MCP（HTTP 模式）** | 扣子 Coze 等支持远程 MCP 的平台（`membridge mcp --http` 后经 URL 接入） | ✅ v0.2 |
+| **init 手动指南** | 字节 Trae 等界面化 MCP 平台（init 打印逐步指引） | ✅ v0.2 |
+| **CLI / SDK** | 任意能调用命令行的环境（剪贴板兜底：`membridge context "<主题>"`） | ✅ v0 |
+| **浏览器插件** | 豆包、Kimi、ChatGPT 网页版等封闭 Web 助手 | 📋 Phase 1+ |
 
 > 对完全封闭、不支持任何外部接入的 App，兜底方案是"剪贴板/分享"通道
 > （`membridge context` 复制粘贴），永远可用。
@@ -68,7 +71,8 @@
 git clone https://github.com/jiabaobei/memory-bridge.git
 cd memory-bridge
 pip install -e .
-python examples/demo.py     # 90 秒看懂：手机记忆 → 差分包 → PC 无缝继续
+membridge init               # 一键接入本机检测到的 AI 平台（可选配网盘通道）
+python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 无缝继续
 ```
 
 ### CLI
