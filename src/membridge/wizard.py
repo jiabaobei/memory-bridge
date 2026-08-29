@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from . import clients
-from .store import MemoryStore
+from .store import MemoryStore, default_db_path
 from .transport import FolderTransport
 
 STATUS_MARK = {
@@ -124,11 +124,7 @@ def run_init(opts: InitOptions, out=print) -> int:
                 out(FREE_CLOUD_GUIDE)
 
     # ── 第二步：记忆库位置 ────────────────────────────────────────
-    db = (
-        opts.db
-        or os.environ.get("MEMBRIDGE_DB")
-        or str(Path.home() / ".membridge" / "memory.db")
-    )
+    db = opts.db or default_db_path()
     store = MemoryStore(db)
 
     # ── 第三步：设备名 ────────────────────────────────────────────

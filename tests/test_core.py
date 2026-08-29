@@ -110,6 +110,34 @@ def test_dss_delta_roundtrip_between_devices():
     pc.close()
 
 
+def test_store_creates_missing_parent_dirs():
+    """回归测试（v0.4.1）：全新机器上 ~/.membridge 不存在时 init 崩溃的 bug。"""
+    tmp = tempfile.mkdtemp()
+    deep = os.path.join(tmp, "a", "b", "c", "mem.db")
+    assert not os.path.exists(os.path.dirname(deep))
+    store = MemoryStore(deep, device="regression")
+    store.add(MemoryNode(content=COFFEE, device="regression"))
+    assert store.count_nodes() == 1
+    assert os.path.isfile(deep)
+    store.close()
+
+
+def test_default_db_path_prefers_env():
+    saved = os.environ.get("MEMBRIDGE_DB")
+    try:
+        os.environ["MEMBRIDGE_DB"] = "D:/custom/mem.db"
+        from membridge.store import default_db_path
+
+        assert default_db_path() == "D:/custom/mem.db"
+        del os.environ["MEMBRIDGE_DB"]
+        assert default_db_path().endswith("memory.db")  # 全局默认 ~/.membridge
+    finally:
+        if saved:
+            os.environ["MEMBRIDGE_DB"] = saved
+        else:
+            os.environ.pop("MEMBRIDGE_DB", None)
+
+
 def test_path_a_serialization_and_confidence_filter():
     now = time.time()
     good = MemoryNode(content=LATTE, device="phone", confidence=0.9, created_at=now)

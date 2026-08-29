@@ -2,6 +2,17 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.1] - 2026-08-29
+
+修复 WorkBuddy（技能化 agent）实战反馈的两个真实问题。
+
+- **修复**：全新机器上 `~/.membridge` 父目录不存在导致 `sqlite3.OperationalError`
+  建库崩溃（WorkBuddy 首次真实 init 时发现）；补回归测试
+- **确立产品语义：一台设备一份全局记忆库**——init / doctor / add / search /
+  stats 默认统一解析到 `~/.membridge/memory.db`（env MEMBRIDGE_DB 优先），
+  消除"init 建全局库、add 写进工作区旧文件"的割裂；项目隔离显式传 `--db`
+- `default_db_path` 收口到 store.py 单一实现，cli / wizard 共用
+
 ## [0.4.0] - 2026-08-29
 
 借鉴腾讯 ncnn 的工程实践（docs/design-notes/ncnn-borrowings.md）：自描述包、

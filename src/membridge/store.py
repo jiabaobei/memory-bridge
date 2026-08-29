@@ -10,10 +10,23 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .embeddings import cosine
 from .node import MemoryNode
+
+
+def default_db_path() -> str:
+    """一台设备一份**全局记忆库**（产品语义，v0.4.1 确立）。
+
+    记忆跟着人走而不是跟着项目走：init / doctor / add / search / stats 等
+    全部命令默认解析到同一份库（环境变量 MEMBRIDGE_DB 优先，其次
+    ~/.membridge/memory.db）。需要项目级隔离时显式传 --db。
+    """
+    return os.environ.get("MEMBRIDGE_DB") or str(
+        Path.home() / ".membridge" / "memory.db"
+    )
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS nodes (
@@ -47,6 +60,7 @@ class MemoryStore:
 
     def __init__(self, path: str = "membridge.db", device: Optional[str] = None) -> None:
         self.path = path
+        # 父目录不存在时 sqlite3 会拒绝建库（v0.4.1 修复：init 在全新机器上崩溃）
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
         self.conn = sqlite3.connect(path)

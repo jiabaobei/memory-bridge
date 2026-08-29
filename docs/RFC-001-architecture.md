@@ -29,6 +29,10 @@
 
 ## 3. 数据模型
 
+**产品语义（v0.4.1 确立）：一台设备一份全局记忆库**（默认 `~/.membridge/memory.db`，
+env `MEMBRIDGE_DB` 可覆盖）——记忆跟着人走，不跟项目走；init / doctor / add /
+search / stats 默认解析到同一份库，需要项目隔离时显式传 `--db`。
+
 一条记忆 = 论文中的语义节点 n_i：
 
 ```

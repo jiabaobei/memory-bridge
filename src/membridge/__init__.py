@@ -20,7 +20,7 @@ from .store import MemoryStore
 from .san import build_edges
 from . import capabilities, clients, dss, heat, injection, privacy, transport
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "MemoryNode",

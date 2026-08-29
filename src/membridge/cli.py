@@ -25,7 +25,7 @@ from .embeddings import HashingEmbedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
 from .san import build_edges
-from .store import MemoryStore
+from .store import MemoryStore, default_db_path
 
 
 def _utf8_console() -> None:
@@ -36,15 +36,6 @@ def _utf8_console() -> None:
                 stream.reconfigure(encoding="utf-8")
             except Exception:  # pragma: no cover
                 pass
-
-
-def default_db_path() -> str:
-    """与 wizard.run_init 完全一致的路径解析，避免 init 建一个库、
-    其余命令却默认读写工作区里的 ./membridge.db。"""
-    return (
-        os.environ.get("MEMBRIDGE_DB")
-        or str(Path.home() / ".membridge" / "memory.db")
-    )
 
 
 def _open_store(args: argparse.Namespace) -> MemoryStore:
@@ -100,15 +91,16 @@ def cmd_preload(args: argparse.Namespace) -> int:
     return 0
 
 
-def _safe_delta_file(p: str, *, for_write: bool, allowed_bases: List[str]) -> str:
-    """差异包路径校验：禁止 '..' 上跳、必须 .json、写入限允许目录（包含性校验）。"""
+def _safe_delta_file(p: str, *, for_write: bool,
+                     allowed_bases: Optional[List[str]] = None) -> str:
+    """差异包路径校验：禁止 '..' 上跳、必须 .json；写入且提供 allowed_bases 时做包含性校验。"""
     raw = (p or "").strip()
     if not raw or ".." in raw.replace("\\", "/").split("/"):
         raise SystemExit(f"路径不允许包含 '..' 上跳成分：{raw}")
     norm = os.path.normpath(os.path.abspath(os.path.expanduser(raw)))
     if os.path.splitext(norm)[1].lower() != ".json":
         raise SystemExit(f"差异包必须是 .json 文件：{norm}")
-    if for_write:
+    if for_write and allowed_bases:
         bases = [os.path.realpath(os.path.abspath(b)) for b in allowed_bases]
         try:
             inside = any(
@@ -123,7 +115,7 @@ def _safe_delta_file(p: str, *, for_write: bool, allowed_bases: List[str]) -> st
             )
         if os.path.exists(norm):
             raise SystemExit(f"目标已存在，拒绝覆盖：{norm}")
-    elif not os.path.isfile(norm):
+    elif not for_write and not os.path.isfile(norm):
         raise SystemExit(f"差异包不存在：{norm}")
     return norm
 
