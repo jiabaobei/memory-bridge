@@ -18,9 +18,9 @@ from .embeddings import HashingEmbedder, OpenAIEmbedder, cosine, embedder_identi
 from .node import MemoryNode
 from .store import MemoryStore
 from .san import build_edges
-from . import capabilities, clients, dss, heat, injection, privacy, transport
+from . import capabilities, clients, dss, heat, injection, privacy, sync_agent, transport, vault
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 __all__ = [
     "MemoryNode",

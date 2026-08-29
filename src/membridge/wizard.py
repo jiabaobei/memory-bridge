@@ -73,6 +73,7 @@ class InitOptions:
     device: Optional[str] = None
     netdisk_dir: Optional[str] = None
     skip_netdisk: bool = False
+    no_autosync: bool = False
     all_mode: bool = False
     interactive: Optional[bool] = None  # None = 按 stdin 是否 TTY 自动判断
 
@@ -88,40 +89,23 @@ def _ask(prompt: str, default: str = "") -> str:
 def run_init(opts: InitOptions, out=print) -> int:
     interactive = sys.stdin.isatty() if opts.interactive is None else opts.interactive
 
-    # ── 第一步：云盘通道（强制配置：记忆不上云，跨设备无从谈起）────
+    # ── 第一步：云盘通道（强制配置；通道按项目规定自动选择，零提问）──
     out("—— 第一步：配置跨设备同步（云盘中转，必做）——")
     out("   原理：记忆先变成加密差分包放进你的云盘，任何设备都能接着上一台设备的进度。")
+    out("   通道自动选择规则（规定于 RFC-001）：坚果云 > OneDrive > 百度网盘同步盘 > iCloud > Dropbox > Google Drive")
     netdisk = opts.netdisk_dir
     skipped = False
     if opts.skip_netdisk:
         skipped = True
     elif netdisk is None:
-        if interactive:
-            while netdisk is None and not skipped:
-                found = detect_sync_roots()
-                if found:
-                    listing = "、".join(f"{n}（{p}）" for n, p in found)
-                    out(f"   检测到本机已装的同步盘：{listing}")
-                    default_dir = str(Path(found[0][1]) / "membridge")
-                    raw = _ask("   通道目录（输入 skip 强制跳过）", default_dir)
-                else:
-                    out(FREE_CLOUD_GUIDE)
-                    raw = _ask("   已有云盘？输入其同步文件夹路径（输入 skip 强制跳过）", "")
-                if raw.strip().lower() == "skip":
-                    confirm = _ask("   跳过后跨设备功能不可用！再次输入 skip 确认", "")
-                    if confirm.strip().lower() == "skip":
-                        skipped = True
-                    continue
-                if raw.strip():
-                    netdisk = raw.strip()
+        found = detect_sync_roots()
+        if found:
+            netdisk = str(Path(found[0][1]) / "membridge")
+            alts = "、".join(n for n, _ in found[1:])
+            out(f"   ☁️ 自动选定：{found[0][0]} → {netdisk}" + (f"（检测到备选：{alts}，可用 --netdisk-dir 覆盖）" if alts else ""))
         else:
-            found = detect_sync_roots()
-            if found:
-                netdisk = str(Path(found[0][1]) / "membridge")
-                out(f"   非交互模式：自动使用检测到的 {found[0][0]} 通道：{netdisk}")
-            else:
-                skipped = True
-                out(FREE_CLOUD_GUIDE)
+            skipped = True
+            out(FREE_CLOUD_GUIDE)
 
     # ── 第二步：记忆库位置 ────────────────────────────────────────
     db = opts.db or default_db_path()
@@ -143,10 +127,47 @@ def run_init(opts: InitOptions, out=print) -> int:
         FolderTransport(netdisk, store)
         store.set_netdisk(netdisk)
         out(f"\n☁️ 云盘通道已配置（必做项完成）：{netdisk}")
-        out(f"   outbox/ 发包、archive/ 归档=T4 云端")
-        out(f"   发布：membridge publish --dir \"{netdisk}\" --passphrase 你的口令")
-        out(f"   取回：membridge fetch   --dir \"{netdisk}\" --passphrase 你的口令")
-        out("   ⚠️ 口令自行牢记、不要写进任何文件；新设备跑一遍 init + 同一口令即可同步")
+
+        # 一次性口令 → 本机保险库（DPAPI 加密，之后自动同步永不再问）
+        if interactive:
+            import getpass
+
+            try:
+                raw = getpass.getpass("   设置自动同步口令（只输这一次，之后记忆按重要程度自动上云）: ")
+            except (EOFError, OSError):
+                raw = ""
+            if raw:
+                from .vault import save_passphrase
+
+                try:
+                    save_passphrase(store, raw)
+                    out("   🔐 口令已存入本机保险库（DPAPI 加密，仅本机本用户可解）")
+                except OSError as exc:
+                    out(f"   ⚠️ 口令托管失败：{exc}")
+            else:
+                out("   ⏭ 未设置口令：自动同步暂不生效，重跑 membridge init 可补设")
+        else:
+            from .vault import load_passphrase
+
+            if load_passphrase(store) is None:
+                out("   ⚠️ 尚未设置自动同步口令：交互运行 membridge init 设置一次即可全自动")
+
+        # 注册计划任务（Windows）：每 15 分钟自动双向同步，用户零点击
+        if not opts.no_autosync and os.name == "nt":
+            import shutil
+            import subprocess
+
+            exe = shutil.which("membridge") or shutil.which("membridge.exe")
+            cmd = f'"{exe}" autosync' if exe else f'"{sys.executable}" -m membridge autosync'
+            r = subprocess.run(
+                ["schtasks", "/Create", "/F", "/SC", "MINUTE", "/MO", "15",
+                 "/TN", "MemoryBridge AutoSync", "/TR", cmd],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+            )
+            if r.returncode == 0:
+                out("   ⏱ 自动同步计划任务已注册：每 15 分钟运行一次（重要记忆立即上云）")
+            else:
+                out(f"   ⚠️ 计划任务注册失败：{r.stderr.strip() or r.stdout.strip()}")
     else:
         out("\n⚠️ 未配置云盘：记忆仅存本机，跨设备功能未启用。")
         if not opts.skip_netdisk:

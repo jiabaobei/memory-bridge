@@ -2,6 +2,21 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.5.0] - 2026-08-29
+
+全自动同步：用户零点击，记忆按重要程度自动上云。
+
+- **云盘通道自动选定**：规定优先级（坚果云 > OneDrive > 百度网盘同步盘 >
+  iCloud > Dropbox > Google Drive），检测到哪个用哪个，多盘共存也不问
+- **口令保险库**（vault.py）：Windows DPAPI 加密托管同步口令，用户只在 init
+  输入一次，此后永不再输（纯标准库 ctypes，零第三方依赖）
+- **自动同步引擎**（sync_agent + `membridge autosync`）：重要记忆（高置信 /
+  高频访问 / important 标签）**立即上云**；普通记忆攒够 5 条或超 24 小时
+  批量上云；`local` 隐私记忆**永不上云**
+- **计划任务**：init 自动注册 Windows 计划任务（每 15 分钟双向同步），
+  `--no-autosync` 可关闭
+- 测试增至 35 项
+
 ## [0.4.1] - 2026-08-29
 
 修复 WorkBuddy（技能化 agent）实战反馈的两个真实问题。

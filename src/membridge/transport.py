@@ -80,24 +80,28 @@ class FolderTransport:
         allowed: Optional[Callable[[MemoryNode], bool]] = None,
         eps: float = EPSILON,
         embedder_info: Optional[Dict] = None,
+        delta: Optional[Delta] = None,
     ) -> Optional[str]:
         """把本设备"尚未发布过"的差分包写入通道。无新内容时返回 None。
 
         默认强制端到端加密；plaintext=True 时需调用方显式确认放弃加密。
         embedder_info 为嵌入器自描述指纹，接收端据此做一致性握手。
+        delta 可传入预构差分包（自动同步引擎按重要度筛选后使用）；
+        未传入时按"尚未发布过"自动计算。
         """
         if cryptor_needed(passphrase, plaintext):
             raise ValueError(
                 "出于隐私安全，写入网盘默认必须加密：请提供 passphrase，"
                 "或显式确认 plaintext=True（明文，不推荐）"
             )
-        delta = delta_unsent(
-            self.store,
-            self._published_fps(),
-            allowed=allowed if allowed is not None else (lambda n: preload_allowed(n)),
-            eps=eps,
-            embedder_info=embedder_info,
-        )
+        if delta is None:
+            delta = delta_unsent(
+                self.store,
+                self._published_fps(),
+                allowed=allowed if allowed is not None else (lambda n: preload_allowed(n)),
+                eps=eps,
+                embedder_info=embedder_info,
+            )
         if not delta.nodes and not delta.edges:
             return None
 

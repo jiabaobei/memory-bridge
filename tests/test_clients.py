@@ -168,14 +168,16 @@ def test_wizard_netdisk_dir_creates_channel():
         lines = []
         rc = run_init(
             InitOptions(db=str(home / "mem.db"), device="手机",
-                        netdisk_dir=str(ch), interactive=False),
+                        netdisk_dir=str(ch), no_autosync=True, interactive=False),
             out=lines.append,
         )
         assert rc == 0
         text = "\n".join(lines)
         assert "云盘通道已配置" in text
         assert (ch / "outbox").is_dir() and (ch / "archive").is_dir()
-        assert "publish" in text and "fetch" in text
+        # 自动同步未设口令时给出指引（不再输出手动 publish/fetch 命令）
+        assert "自动同步口令" in text
+        assert "publish --dir" not in text
     finally:
         wizard.HOME_DIR = None
         _restore()

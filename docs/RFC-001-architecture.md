@@ -116,6 +116,18 @@ v0 决策（按约定采用启发式，接口签名对齐论文）：
 明文需显式 `--plaintext` 确认。已发布指纹持久化在本地库 `meta` 中，重复
 发布幂等为空。
 
+### 7.2 自动同步（v0.5，用户零点击）
+
+- **通道自动选择规则**：按优先级取第一个检测到的同步盘——坚果云 > OneDrive >
+  百度网盘同步盘 > iCloud > Dropbox > Google Drive；多盘共存不询问，其余列为备选。
+- **口令托管**：`vault.py` 用 Windows DPAPI（绑定当前用户，纯 ctypes 零依赖）
+  加密同步口令存于本库 meta；换机器/换账户不可解。
+- **重要度规则**：重要记忆（confidence ≥ 0.8 / 访问 ≥ 2 次 / important 标签）
+  立即上云；普通记忆 ≥ 5 条或距上次发布 ≥ 24h 批量上云；`migration=local`
+  永不上云（PAMS 优先级最高）。
+- **调度**：init 自动注册 Windows 计划任务（每 15 分钟 `membridge autosync`），
+  双向（发布 + 取回）；`--no-autosync` 退出。
+
 ## 8. 注入层
 
 - **Path A（已实现）**：`injection.serialize` 把高置信节点序列化为带出处的

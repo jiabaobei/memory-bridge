@@ -239,9 +239,17 @@ def cmd_init(args: argparse.Namespace) -> int:
             device=args.device,
             netdisk_dir=args.netdisk_dir,
             skip_netdisk=args.skip_netdisk,
+            no_autosync=args.no_autosync,
             all_mode=args.all,
         )
     )
+
+
+def cmd_autosync(args: argparse.Namespace) -> int:
+    from .sync_agent import run_autosync
+
+    db = args.db if args.db != "membridge.db" else None
+    return run_autosync(store_path=db, passphrase=args.passphrase)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: ARG001
@@ -323,14 +331,22 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.set_defaults(func=cmd_mcp)
 
     p = sub.add_parser("init",
-                       help="一键接入本机检测到的 AI 平台（第一件事：配置云盘跨设备同步）")
+                       help="一键配置：云盘通道自动选定 + 一次性口令 + 平台接入 + 自动同步计划任务")
     p.add_argument("--all", action="store_true",
                    help="非交互：配置所有检测到的平台，并打印其余平台的手动指南")
     p.add_argument("--netdisk-dir", default=None,
                    help="直接指定云盘/同步文件夹路径（跳过询问）")
     p.add_argument("--skip-netdisk", action="store_true",
                    help="跳过云盘配置（仅单设备使用）")
+    p.add_argument("--no-autosync", action="store_true",
+                   help="不注册自动同步计划任务（默认注册，每 15 分钟自动同步）")
     p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("autosync",
+                       help="自动同步：重要记忆立即上云、普通记忆批量上云 + 取回其他设备记忆")
+    p.add_argument("--passphrase", default=None,
+                   help="口令（已托管到本机保险库时无需提供；供计划任务外的手动使用）")
+    p.set_defaults(func=cmd_autosync)
 
     p = sub.add_parser("doctor", help="环境自检：版本 / 记忆库 / 可选依赖 / 平台检测")
     p.set_defaults(func=cmd_doctor)
