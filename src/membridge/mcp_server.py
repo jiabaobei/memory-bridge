@@ -35,7 +35,9 @@ def create_server(store_path: Optional[str] = None, embedder: Optional[Embedder]
     try:
         from mcp.server.fastmcp import FastMCP  # 延迟导入，保持核心零依赖
     except ImportError as exc:
-        raise ImportError('需要 MCP 依赖：pip install "membridge[mcp]"') from exc
+        raise ImportError(
+            f"MCP 依赖不可用：{exc}。请安装 mcp 1.x：pip install \"membridge[mcp]\""
+        ) from exc
 
     store = open_store(store_path)
     embedder = embedder or HashingEmbedder()

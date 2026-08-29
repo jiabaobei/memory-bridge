@@ -37,7 +37,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.2"]
+mcp = ["mcp>=1.2,<2"]
 openai = ["openai>=1.0"]
 netdisk = ["cryptography>=42"]
 dev = ["pytest>=7.0"]
