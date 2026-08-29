@@ -23,6 +23,11 @@ def run_doctor(out=print) -> int:
 
         s = MemoryStore(db)
         out(f"  ✅ 可用（{s.count_nodes()} 条记忆，{s.count_edges()} 条关联，设备 {s.device_name}）")
+        if s.netdisk:
+            out(f"  ☁️ 云盘通道: {s.netdisk}")
+            out("     （跨设备同步就绪；发布/取回命令见 membridge init 输出）")
+        else:
+            out("  ⚠️ 云盘通道: 未配置（跨设备功能未启用）——运行 membridge init 配置")
         s.close()
     else:
         out("  ⚠️ 尚未创建（运行 membridge init 即可）")

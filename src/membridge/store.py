@@ -61,6 +61,16 @@ class MemoryStore:
     def device_name(self) -> str:
         return self._get_meta("device") or "unknown"
 
+    # ---------- 云盘通道（跨设备同步）----------
+
+    @property
+    def netdisk(self) -> Optional[str]:
+        """本机已配置的云盘通道目录（未配置时为 None）。"""
+        return self._get_meta("netdisk_dir")
+
+    def set_netdisk(self, path: str) -> None:
+        self._set_meta("netdisk_dir", path)
+
     # ---------- 节点（SAN 的 N） ----------
 
     def add(self, node: MemoryNode) -> MemoryNode:
@@ -172,6 +182,7 @@ class MemoryStore:
             "nodes": self.count_nodes(),
             "edges": self.count_edges(),
             "by_migration": by_migration,
+            "netdisk": self.netdisk or "未配置（跨设备未启用）",
         }
 
     # ---------- 内部 ----------

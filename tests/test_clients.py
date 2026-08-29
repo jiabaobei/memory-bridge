@@ -111,6 +111,7 @@ def test_wizard_noninteractive_all_mode():
     wizard.HOME_DIR = home
     try:
         (home / ".workbuddy").mkdir()
+        (home / "我的坚果云").mkdir()  # 检测到同步盘：非交互也应自动配好云盘
         from membridge.wizard import InitOptions, run_init
 
         lines = []
@@ -122,12 +123,35 @@ def test_wizard_noninteractive_all_mode():
         assert rc == 0
         text = "\n".join(lines)
         assert "测试机" in text and "WorkBuddy" in text
-        # 云盘是第一步
+        # 云盘是第一步，且被强制配置（非交互自动使用检测到的同步盘）
         assert text.index("云盘中转") < text.index("WorkBuddy")
+        assert "云盘通道已配置" in text
+        assert (home / "我的坚果云" / "membridge" / "outbox").is_dir()
         assert (home / ".workbuddy" / "skills" / "memory-bridge" / "SKILL.md").exists()
         assert (home / "mem.db").exists()  # 向导建库
         # 扣子等手动指南出现在输出里
         assert "--http" in text
+    finally:
+        wizard.HOME_DIR = None
+        _restore()
+
+
+def test_wizard_no_cloud_warns_loudly():
+    import membridge.wizard as wizard
+    home = _with_home()
+    wizard.HOME_DIR = home
+    try:
+        from membridge.wizard import InitOptions, run_init
+
+        lines = []
+        rc = run_init(
+            InitOptions(db=str(home / "mem.db"), device="测试机",
+                        all_mode=True, interactive=False),
+            out=lines.append,
+        )
+        assert rc == 0
+        text = "\n".join(lines)
+        assert "未配置云盘" in text and "免费云盘" in text
     finally:
         wizard.HOME_DIR = None
         _restore()
@@ -149,7 +173,7 @@ def test_wizard_netdisk_dir_creates_channel():
         )
         assert rc == 0
         text = "\n".join(lines)
-        assert "云盘通道就绪" in text
+        assert "云盘通道已配置" in text
         assert (ch / "outbox").is_dir() and (ch / "archive").is_dir()
         assert "publish" in text and "fetch" in text
     finally:

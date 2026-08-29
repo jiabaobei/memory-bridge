@@ -88,37 +88,40 @@ def _ask(prompt: str, default: str = "") -> str:
 def run_init(opts: InitOptions, out=print) -> int:
     interactive = sys.stdin.isatty() if opts.interactive is None else opts.interactive
 
-    # ── 第一步：云盘通道（灵魂功能，默认必做）────────────────────────
-    out("—— 第一步：配置跨设备同步（云盘中转）——")
+    # ── 第一步：云盘通道（强制配置：记忆不上云，跨设备无从谈起）────
+    out("—— 第一步：配置跨设备同步（云盘中转，必做）——")
     out("   原理：记忆先变成加密差分包放进你的云盘，任何设备都能接着上一台设备的进度。")
     netdisk = opts.netdisk_dir
-    if netdisk is None and not opts.skip_netdisk and interactive:
-        found = detect_sync_roots()
-        if found:
-            listing = "、".join(f"{n}（{p}）" for n, p in found)
-            out(f"   检测到本机已装的同步盘：{listing}")
-            try:
-                ans = input("   用该同步盘配置通道? [Y/n]: ").strip().lower()
-            except (EOFError, OSError):
-                ans = ""
-            if ans != "n":
-                default_dir = str(Path(found[0][1]) / "membridge")
-                netdisk = _ask("   通道目录", default_dir)
+    skipped = False
+    if opts.skip_netdisk:
+        skipped = True
+    elif netdisk is None:
+        if interactive:
+            while netdisk is None and not skipped:
+                found = detect_sync_roots()
+                if found:
+                    listing = "、".join(f"{n}（{p}）" for n, p in found)
+                    out(f"   检测到本机已装的同步盘：{listing}")
+                    default_dir = str(Path(found[0][1]) / "membridge")
+                    raw = _ask("   通道目录（输入 skip 强制跳过）", default_dir)
+                else:
+                    out(FREE_CLOUD_GUIDE)
+                    raw = _ask("   已有云盘？输入其同步文件夹路径（输入 skip 强制跳过）", "")
+                if raw.strip().lower() == "skip":
+                    confirm = _ask("   跳过后跨设备功能不可用！再次输入 skip 确认", "")
+                    if confirm.strip().lower() == "skip":
+                        skipped = True
+                    continue
+                if raw.strip():
+                    netdisk = raw.strip()
         else:
-            out(FREE_CLOUD_GUIDE)
-            try:
-                ans = input("   已有云盘？输入其同步文件夹路径（回车跳过）: ").strip()
-            except (EOFError, OSError):
-                ans = ""
-            netdisk = ans or None
-    elif netdisk is None and not opts.skip_netdisk:
-        # 非交互：给出检测与引导，不阻塞
-        found = detect_sync_roots()
-        if found:
-            out(f"   检测到同步盘 {found[0][0]}；自动配置请加：--netdisk-dir \"{Path(found[0][1]) / 'membridge'}\"")
-        else:
-            out(FREE_CLOUD_GUIDE)
-        out("   （非交互模式暂跳过；交互运行 membridge init 可引导配置，或用 --netdisk-dir 直通）")
+            found = detect_sync_roots()
+            if found:
+                netdisk = str(Path(found[0][1]) / "membridge")
+                out(f"   非交互模式：自动使用检测到的 {found[0][0]} 通道：{netdisk}")
+            else:
+                skipped = True
+                out(FREE_CLOUD_GUIDE)
 
     # ── 第二步：记忆库位置 ────────────────────────────────────────
     db = (
@@ -142,12 +145,16 @@ def run_init(opts: InitOptions, out=print) -> int:
 
     if netdisk:
         FolderTransport(netdisk, store)
-        out(f"\n☁️ 云盘通道就绪：{netdisk}（outbox/ 发包、archive/ 归档=T4 云端）")
+        store.set_netdisk(netdisk)
+        out(f"\n☁️ 云盘通道已配置（必做项完成）：{netdisk}")
+        out(f"   outbox/ 发包、archive/ 归档=T4 云端")
         out(f"   发布：membridge publish --dir \"{netdisk}\" --passphrase 你的口令")
         out(f"   取回：membridge fetch   --dir \"{netdisk}\" --passphrase 你的口令")
         out("   ⚠️ 口令自行牢记、不要写进任何文件；新设备跑一遍 init + 同一口令即可同步")
     else:
-        out("\n⏭ 已跳过云盘配置：记忆只保留在本机（单设备使用不受影响，随时可重跑 init 补配）")
+        out("\n⚠️ 未配置云盘：记忆仅存本机，跨设备功能未启用。")
+        if not opts.skip_netdisk:
+            out("   强烈建议重跑 membridge init 完成云盘配置（装一款免费同步盘即可，见上方指南）。")
 
     out(f"\n记忆库：{db}")
     out(f"设备名：{device}（当前 {store.count_nodes()} 条记忆，{store.count_edges()} 条关联）")

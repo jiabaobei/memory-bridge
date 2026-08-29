@@ -72,7 +72,8 @@
 git clone https://github.com/jiabaobei/memory-bridge.git
 cd memory-bridge
 pip install -e .
-membridge init               # 第一步就配好云盘通道（自动识别已装同步盘，没有则引导免费云盘），
+membridge init               # 强制完成云盘通道配置（默认必做，检测已装同步盘自动配好；
+                             # 没有则引导免费云盘；确要跳过需显式确认），
                              # 随后自动接入本机各 AI 平台
 python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 无缝继续
 ```
