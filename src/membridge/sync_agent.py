@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -67,7 +68,11 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
     if not netdisk:
         out("⚠️ 尚未配置云盘通道：请先运行 membridge init")
         return 2
-    pass_ = passphrase or load_passphrase(store)
+    pass_ = (
+        passphrase
+        or os.environ.get("MEMBRIDGE_PASSPHRASE")
+        or load_passphrase(store)
+    )
     if not pass_:
         out("⚠️ 尚未设置自动同步口令：请运行 membridge init 一次性设置")
         return 2

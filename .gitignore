@@ -14,6 +14,7 @@ venv/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+.mimosa/
 
 # 记忆库数据（本地隐私数据，绝不入库）
 *.db

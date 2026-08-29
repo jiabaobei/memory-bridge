@@ -62,13 +62,18 @@ def test_importance_rule():
 
 
 def test_autosync_requires_passphrase_and_channel():
-    store = _store("手机")
-    lines = []
-    assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 2
-    store.set_netdisk(rf"{tempfile.mkdtemp()}\chan")
-    lines.clear()
-    assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 2
-    assert any("口令" in ln for ln in lines)
+    saved = os.environ.pop("MEMBRIDGE_PASSPHRASE", None)  # 隔离系统环境变量
+    try:
+        store = _store("手机")
+        lines = []
+        assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 2
+        store.set_netdisk(rf"{tempfile.mkdtemp()}\chan")
+        lines.clear()
+        assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 2
+        assert any("口令" in ln for ln in lines)
+    finally:
+        if saved:
+            os.environ["MEMBRIDGE_PASSPHRASE"] = saved
     store.close()
 
 
@@ -90,31 +95,36 @@ def test_autosync_important_publishes_immediately():
 
 
 def test_autosync_routine_batches_and_local_never_uploaded():
-    store = _store("手机")
-    ch = tempfile.mkdtemp()
-    store.set_netdisk(ch)
-    vault.save_passphrase(store, "口令abc")
-    for i in range(4):
-        _add(store, f"普通记忆内容第{i}条", confidence=0.5)
-    secret = _add(store, "本机隐私条目", confidence=1.0, migration="local")
-    store._set_meta("last_publish_at", str(__import__("time").time()))  # 模拟刚发布过
-    lines = []
-    sync_agent.run_autosync(store_path=store.path, out=lines.append)
-    # 4 条普通 < 5 条批量线，且无重要记忆 → 不发布；local 永不出现
-    assert not os.listdir(os.path.join(ch, "outbox"))
-    _add(store, "第5条普通记忆", confidence=0.5)
-    lines.clear()
-    sync_agent.run_autosync(store_path=store.path, out=lines.append)
-    assert any("批量上云" in ln for ln in lines)
-    pkg = [os.path.join(ch, "outbox", f) for f in os.listdir(os.path.join(ch, "outbox"))][0]
-    from membridge.transport import PassphraseCryptor
+    saved = os.environ.pop("MEMBRIDGE_PASSPHRASE", None)  # 隔离系统环境变量
+    try:
+        store = _store("手机")
+        ch = tempfile.mkdtemp()
+        store.set_netdisk(ch)
+        vault.save_passphrase(store, "口令abc")
+        for i in range(4):
+            _add(store, f"普通记忆内容第{i}条", confidence=0.5)
+        secret = _add(store, "本机隐私条目", confidence=1.0, migration="local")
+        store._set_meta("last_publish_at", str(__import__("time").time()))  # 模拟刚发布过
+        lines = []
+        sync_agent.run_autosync(store_path=store.path, out=lines.append)
+        # 4 条普通 < 5 条批量线，且无重要记忆 → 不发布；local 永不出现
+        assert not os.listdir(os.path.join(ch, "outbox"))
+        _add(store, "第5条普通记忆", confidence=0.5)
+        lines.clear()
+        sync_agent.run_autosync(store_path=store.path, out=lines.append)
+        assert any("批量上云" in ln for ln in lines)
+        pkg = [os.path.join(ch, "outbox", f) for f in os.listdir(os.path.join(ch, "outbox"))][0]
+        from membridge.transport import PassphraseCryptor
 
-    env = json.loads(open(pkg, "rb").read().decode("utf-8"))
-    cryptor = PassphraseCryptor("口令abc", salt=bytes.fromhex(env["salt"]))
-    payload = json.loads(cryptor.decrypt(env["token"]))["nodes"]
-    assert all(n["content"] != secret.content for n in payload)  # local 永不上云
-    assert len(payload) == 5
-    store.close()
+        env = json.loads(open(pkg, "rb").read().decode("utf-8"))
+        cryptor = PassphraseCryptor("口令abc", salt=bytes.fromhex(env["salt"]))
+        payload = json.loads(cryptor.decrypt(env["token"]))["nodes"]
+        assert all(n["content"] != secret.content for n in payload)  # local 永不上云
+        assert len(payload) == 5
+        store.close()
+    finally:
+        if saved:
+            os.environ["MEMBRIDGE_PASSPHRASE"] = saved
 
 
 def test_init_autogenerates_passphrase_into_vault(tmp_root=None):

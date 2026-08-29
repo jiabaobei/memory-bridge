@@ -99,6 +99,9 @@ membridge publish --dir "D:\百度网盘同步盘\membridge" --passphrase 我的
 membridge fetch   --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 从网盘取回
 membridge stats                                         # 记忆库概况
 membridge doctor                                        # 环境自检
+membridge autosync                                      # 自动同步（init 已注册计划任务，每 15 分钟自动运行）
+membridge show-passphrase                               # 配对新设备时查看同步口令（系统已替你生成并托管）
+membridge set-passphrase                                # 手动设置/修改同步口令（一般不需要）
 ```
 
 口令也可由环境变量 `MEMBRIDGE_PASSPHRASE` 提供，免得每次手输。

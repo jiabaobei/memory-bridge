@@ -31,18 +31,20 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Manual guides | ByteDance TRAE and UI-based MCP clients (init prints steps) | ✅ |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.2)
+## Status (v0.7)
 
 | Capability | Status |
 |---|---|
-| One-command platform setup — `membridge init` auto-configures detected MCP clients and installs the WorkBuddy memory skill | ✅ implemented |
+| One-command setup — `membridge init`: mandatory cloud channel (auto-picked by priority rule), **sync passphrase auto-generated & vaulted (DPAPI)**, scheduled auto-sync every 15 min, platform auto-config + WorkBuddy skill install | ✅ implemented |
+| Auto-sync engine — important memories upload immediately, routine ones batched (≥5 or ≥24h), `local`-tagged never leave the device | ✅ implemented |
 | SAN (semantic association network, `w_ij = λ·co-occurrence + (1−λ)·cosine`) | ✅ implemented |
 | Path A injection (auditable context block) | ✅ implemented |
-| MCP server (Add / Search / Preload only) | ✅ implemented |
-| DSS delta sync (semantic fingerprints, edge-quantization ε=0.01) | ✅ implemented |
-| Netdisk-folder transport | Point the publisher at any synced folder (Baidu Netdisk, Jianguoyun, OneDrive, USB, LAN share); delta packets are end-to-end encrypted by default — the provider only ever sees ciphertext | ✅ implemented |
+| MCP server (Add / Search / Preload only) + remote HTTP mode for Coze-class platforms | ✅ implemented |
+| DSS delta sync (semantic fingerprints, ε quantization, **embedder-consistency handshake**) | ✅ implemented |
+| Netdisk-folder transport (`--force` rebuilds a wiped channel) + end-to-end encryption | ✅ implemented |
 | PAMS privacy gates (L1 migration tags + L2 scene domains) | ✅ implemented; L3 DP deferred |
 | TMT heat & preloading (recency × frequency heuristic) | ✅ heuristic done; edge tiers in Phase 3 |
+| Portable `membridge.exe` (ncnn-style per-platform binaries) | ✅ v0.4 |
 | AEE adaptive evolution (α / π_nav / θ_window) | 📋 Phase 4 (interfaces reserved) |
 | Path B hidden-state fusion | 🧪 Phase 4 experimental branch |
 
@@ -61,14 +63,18 @@ python examples/demo.py    # phone memories → delta packet → PC, in 90 secon
 CLI:
 
 ```bash
-membridge init                                      # one-command platform setup
+membridge init                                      # cloud channel (auto-picked) + passphrase
+                                                    # (auto-generated & vaulted) + platform wiring
 membridge add "Working on the MemoryBridge project" --tags dev
 membridge search "MemoryBridge" -k 3
 membridge context "continue this morning's discussion"
 membridge preload my-phone
+membridge autosync                                  # runs automatically every 15 min (scheduled task)
+membridge show-passphrase                           # reveal vaulted passphrase when pairing a device
 membridge delta phone.db --out delta.json
 membridge apply delta.json
 membridge publish --dir "D:/netdisk-sync/membridge" --passphrase my-secret
+membridge publish --dir "D:/netdisk-sync/membridge" --force   # rebuild a wiped channel
 membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge doctor
 ```
