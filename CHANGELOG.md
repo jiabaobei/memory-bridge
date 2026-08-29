@@ -2,6 +2,20 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.0] - 2026-08-29
+
+借鉴腾讯 ncnn 的工程实践（docs/design-notes/ncnn-borrowings.md）：自描述包、
+运行时能力调度、便携免安装构建。
+
+- **自描述同步包 + embedder 一致性握手**：差分包内嵌嵌入器指纹（type/name/dim/fp），
+  接收端发现嵌入模型不一致即拒绝应用——排除"换模型导致记忆语义漂移"的静默错误；
+  旧格式包向后兼容
+- **运行时能力调度**（capabilities.py）：按环境自动选择最优实现并优雅降级
+  （嵌入器 OpenAI→哈希、加密、向量索引、同步盘检测）；`membridge doctor` 展示能力画像
+- **便携 membridge.exe**：PyInstaller 免安装单文件构建（scripts/build_exe.bat），
+  拷到任何 Windows 机器即可用，无需 Python——ncnn 式便携发布
+- CLI 新增 `--version`；测试增至 28 项
+
 ## [0.3.1] - 2026-08-29
 
 修复产品逻辑：云盘配置从"可选询问"改为"init 强制完成"——默认必做，跳过必须显式确认。

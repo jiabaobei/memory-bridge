@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional
 
-from .embeddings import Embedder, HashingEmbedder
+from . import capabilities
+from .embeddings import Embedder, HashingEmbedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
 from .san import build_edges
@@ -45,7 +47,14 @@ def create_server(
         ) from exc
 
     store = open_store(store_path)
-    embedder = embedder or HashingEmbedder()
+    embedder = capabilities.best_embedder()
+    if not store._get_meta("embedder_id"):
+        from .embeddings import embedder_identity
+
+        store._set_meta(
+            "embedder_id",
+            json.dumps(embedder_identity(embedder), ensure_ascii=False),
+        )
 
     settings = {}
     if host:

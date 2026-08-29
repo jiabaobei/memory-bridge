@@ -18,6 +18,7 @@
 - [x] `membridge doctor` 环境自检（v0.2.0）
 - [x] WorkBuddy 记忆技能包自动安装（v0.2.0）
 - [x] `membridge mcp --http` 远程模式：扣子 Coze 等平台经 URL 接入（v0.2.0）
+- [x] 便携 `membridge.exe` 免安装构建（借鉴 ncnn 便携发布，v0.4.0）
 - [ ] PyPI 发布（`pip install membridge`）
 - [ ] 真实 embedding 后端：OpenAI / 本地 bge（含 embedder 标识写库与校验）
 - [ ] TypeScript SDK（覆盖 Cursor/Cline 生态的 TS 用户）
@@ -33,9 +34,11 @@
 - [ ] E2E 加密实时中继（可自托管）：设备密钥对、中继只见密文
 - [ ] 局域网直连通道
 - [ ] 版本向量与冲突解决（Delta.seq 启用，LWW 起步）
-- [ ] embedder 一致性握手（不一致拒绝同步并提示）
+- [x] **embedder 一致性握手**（借鉴 ncnn 自描述 param 思想，提前实现于 v0.4）：
+      差分包内嵌嵌入器指纹，两端模型不一致即拒绝应用
 - [ ] `membridge pair`：设备配对流程（二维码/配对码）
 - [ ] 同步节流与断点续传
+- [ ] 记忆格式转换器（借鉴 ncnn 的 pnnx 生态：从 ChatGPT / Claude / mem0 导出导入）
 
 ## Phase 3 — 边缘预加载与移动端
 

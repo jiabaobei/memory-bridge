@@ -8,6 +8,7 @@ v0 实现 T3（本地长时驻留）与热度排序；T1/T2 边缘驻留、T4 �
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from typing import Dict, List, Optional, Tuple
 
@@ -46,6 +47,8 @@ class MemoryStore:
 
     def __init__(self, path: str = "membridge.db", device: Optional[str] = None) -> None:
         self.path = path
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
         self.conn = sqlite3.connect(path)
         self.conn.executescript(_SCHEMA)
         self.conn.commit()

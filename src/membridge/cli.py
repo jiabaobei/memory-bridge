@@ -20,8 +20,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import dss, heat, injection, privacy, transport
-from .embeddings import HashingEmbedder
+from . import capabilities, dss, heat, injection, privacy, transport
+from .embeddings import HashingEmbedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
 from .san import build_edges
@@ -38,13 +38,24 @@ def _utf8_console() -> None:
                 pass
 
 
+def default_db_path() -> str:
+    """与 wizard.run_init 完全一致的路径解析，避免 init 建一个库、
+    其余命令却默认读写工作区里的 ./membridge.db。"""
+    return (
+        os.environ.get("MEMBRIDGE_DB")
+        or str(Path.home() / ".membridge" / "memory.db")
+    )
+
+
 def _open_store(args: argparse.Namespace) -> MemoryStore:
     return MemoryStore(args.db, device=args.device)
 
 
 def cmd_add(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    embedder = HashingEmbedder()
+    embedder = capabilities.best_embedder()
+    if not store._get_meta("embedder_id"):
+        store._set_meta("embedder_id", json.dumps(embedder_identity(embedder), ensure_ascii=False))
     node = MemoryNode(
         content=args.text,
         embedding=embedder.embed(args.text),
@@ -61,7 +72,7 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def cmd_search(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    hits = store.search(HashingEmbedder().embed(args.query), k=args.k)
+    hits = store.search(capabilities.best_embedder().embed(args.query), k=args.k)
     if not hits:
         print("（暂无相关记忆）")
         return 0
@@ -72,7 +83,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 def cmd_context(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    hits = store.search(HashingEmbedder().embed(args.query), k=args.k)
+    hits = store.search(capabilities.best_embedder().embed(args.query), k=args.k)
     print(injection.serialize(n for n, _ in hits))
     return 0
 
@@ -146,6 +157,11 @@ def cmd_apply(args: argparse.Namespace) -> int:
     with open(in_path, "r", encoding="utf-8") as f:
         delta = dss.Delta.from_json(f.read())
     result = dss.apply_delta(store, delta)
+    if result.get("rejected"):
+        print(f"已拒绝该差异包：嵌入器不一致"
+              f"（本库 {result.get('local_fp')} / 来包 {result.get('incoming_fp')}）——"
+              f"两端必须使用同一嵌入模型")
+        return 2
     print(
         f"来自 {delta.from_device} 的差异包已并入：新增节点 {result['nodes_added']}，"
         f"指纹去重跳过 {result['nodes_skipped']}，应用边 {result['edges_applied']}"
@@ -153,15 +169,26 @@ def cmd_apply(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_passphrase(args: argparse.Namespace) -> Optional[str]:
+    """命令行优先，其次环境变量 MEMBRIDGE_PASSPHRASE（便于自动化同步）。"""
+    return args.passphrase or os.environ.get("MEMBRIDGE_PASSPHRASE")
+
+
 def cmd_publish(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    if not args.passphrase and not args.plaintext:
+    passphrase = _resolve_passphrase(args)
+    if not passphrase and not args.plaintext:
         print("出于隐私安全，写入网盘默认必须加密：请加 --passphrase <口令>，"
+              "或设置环境变量 MEMBRIDGE_PASSPHRASE，"
               "或显式加 --plaintext 放弃加密（不推荐）。")
         return 2
     tr = transport.FolderTransport(args.dir, store)
     try:
-        path = tr.publish(passphrase=args.passphrase, plaintext=args.plaintext)
+        path = tr.publish(
+            passphrase=passphrase,
+            plaintext=args.plaintext,
+            embedder_info=embedder_identity(capabilities.best_embedder()),
+        )
     except ImportError as exc:
         print(str(exc))
         return 2
@@ -175,8 +202,13 @@ def cmd_publish(args: argparse.Namespace) -> int:
 def cmd_fetch(args: argparse.Namespace) -> int:
     store = _open_store(args)
     tr = transport.FolderTransport(args.dir, store)
-    result = tr.fetch(passphrase=args.passphrase)
+    result = tr.fetch(passphrase=_resolve_passphrase(args))
     for fn, src, r in result["applied"]:
+        if r.get("rejected"):
+            print(f"已拒绝来自 {src} 的差分包 {fn}：嵌入器不一致"
+                  f"（本库 {r.get('local_fp')} / 来包 {r.get('incoming_fp')}）——"
+                  f"两端必须使用同一嵌入模型，见 docs/RFC-001-architecture.md §4")
+            continue
         print(f"已并入来自 {src} 的差分包 {fn}："
               f"新增节点 {r['nodes_added']}，去重跳过 {r['nodes_skipped']}，应用边 {r['edges_applied']}")
     for fn, reason in result["skipped"]:
@@ -232,8 +264,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         prog="membridge",
         description="记忆桥 MemoryBridge — 跨设备、跨平台的 AI 共享记忆层",
     )
-    parser.add_argument("--db", default="membridge.db", help="记忆库 SQLite 文件路径")
+    parser.add_argument(
+        "--db",
+        default=default_db_path(),
+        help="记忆库 SQLite 文件路径（默认同 init：环境变量 MEMBRIDGE_DB，"
+        "其次 ~/.membridge/memory.db）",
+    )
     parser.add_argument("--device", default=None, help="本机设备名（首次使用时写入记忆库）")
+    from . import __version__
+
+    parser.add_argument("--version", action="version", version=f"membridge {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("add", help="写入一条记忆")

@@ -12,7 +12,7 @@ import importlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-MODULES = ["test_core", "test_transport", "test_clients"]
+MODULES = ["test_core", "test_transport", "test_clients", "test_capabilities"]
 
 
 def main() -> int:

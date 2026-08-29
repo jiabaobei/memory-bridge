@@ -14,13 +14,13 @@ CDSMP（Cross-Device Semantic Memory Persistence，大模型跨设备语义记�
 架构约束：内容冻结 —— 任何模块只读记忆内容、只调结构参数，绝不改写。
 """
 
-from .embeddings import HashingEmbedder, OpenAIEmbedder, cosine
+from .embeddings import HashingEmbedder, OpenAIEmbedder, cosine, embedder_identity
 from .node import MemoryNode
 from .store import MemoryStore
 from .san import build_edges
-from . import clients, dss, heat, injection, privacy, transport
+from . import capabilities, clients, dss, heat, injection, privacy, transport
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"
 
 __all__ = [
     "MemoryNode",
@@ -28,7 +28,9 @@ __all__ = [
     "HashingEmbedder",
     "OpenAIEmbedder",
     "cosine",
+    "embedder_identity",
     "build_edges",
+    "capabilities",
     "clients",
     "dss",
     "heat",

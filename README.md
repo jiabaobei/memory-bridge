@@ -30,6 +30,8 @@
 | 能力 | 说明 | 状态 |
 |---|---|---|
 | 一键接入平台 | `membridge init` 自动检测并配置主流 AI 平台（MCP 自动写入 / WorkBuddy 技能自动安装 / 其余打印指南） | ✅ v0.2 |
+| 便携免安装 | `membridge.exe` 单文件构建（scripts/build_exe.bat），拷到任何 Windows 机器即用，无需 Python | ✅ v0.4 |
+| 嵌入一致性握手 | 差分包内嵌嵌入器指纹，两端模型不一致即拒绝同步——排除记忆语义漂移 | ✅ v0.4 |
 | SAN 语义关联网络 | 记忆条目 + 语义向量 + 关联边（`w_ij = λ·共现 + (1-λ)·余弦`） | ✅ v0 已实现 |
 | Path A 记忆注入 | 高置信记忆序列化为上下文块拼入 prompt（显式、可审计） | ✅ v0 已实现 |
 | MCP Server | 任意 MCP 客户端即插即用；`--http` 远程模式供扣子 Coze 等平台接入 | ✅ v0 已实现 |
@@ -192,6 +194,12 @@ pytest -q
 
 设计变更请先提 Issue 或阅读 [docs/RFC-001-architecture.md](docs/RFC-001-architecture.md)。
 特别欢迎：真实 embedding 后端、移动端连接器、同步中继实现、评测复现。
+
+## 灵感与致谢
+
+- [Tencent ncnn](https://github.com/tencent/ncnn)：v0.4 起借鉴其零依赖、自描述模型文件
+  （param/bin）与便携免安装发布的工程实践，映射详见
+  [docs/design-notes/ncnn-borrowings.md](docs/design-notes/ncnn-borrowings.md)。
 
 ## License
 

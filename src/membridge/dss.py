@@ -38,6 +38,8 @@ class Delta:
 
     nodes 为缺失节点的只读拷贝（内容冻结：接收端原样落库，不改写）；
     edges 为权重差异超过 ε 的边。seq 字段为版本向量占位，Phase 2 启用。
+    embedder 为自描述指纹（仿 ncnn param/bin 的自描述思想）：记录产生本包
+    的嵌入器身份，接收端用它做一致性握手——fp 不一致则拒绝应用向量。
     """
 
     from_device: str
@@ -45,6 +47,7 @@ class Delta:
     nodes: List[Dict] = field(default_factory=list)
     edges: List[Tuple[str, str, float]] = field(default_factory=list)
     seq: int = 0
+    embedder: Optional[Dict] = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -54,6 +57,7 @@ class Delta:
                 "seq": self.seq,
                 "nodes": self.nodes,
                 "edges": [list(e) for e in self.edges],
+                "embedder": self.embedder,
             },
             ensure_ascii=False,
         )
@@ -67,6 +71,7 @@ class Delta:
             nodes=d.get("nodes", []),
             edges=[tuple(e) for e in d.get("edges", [])],
             seq=d.get("seq", 0),
+            embedder=d.get("embedder"),
         )
 
 
@@ -75,6 +80,7 @@ def compute_delta(
     remote: MemoryStore,
     allowed: Optional[Callable[[MemoryNode], bool]] = None,
     eps: float = EPSILON,
+    embedder_info: Optional[Dict] = None,
 ) -> Delta:
     """计算 local → remote 的差异子图（纯本地计算，可直接单机双库模拟）。"""
     return _delta_against(
@@ -85,6 +91,7 @@ def compute_delta(
         allowed=allowed,
         eps=eps,
         to_device=remote.device_name,
+        embedder_info=embedder_info,
     )
 
 
@@ -93,6 +100,7 @@ def delta_unsent(
     published_fps: set,
     allowed: Optional[Callable[[MemoryNode], bool]] = None,
     eps: float = EPSILON,
+    embedder_info: Optional[Dict] = None,
 ) -> Delta:
     """计算本设备"尚未发布过"的差异包（网盘中转通道使用）。
 
@@ -108,6 +116,7 @@ def delta_unsent(
         allowed=allowed,
         eps=eps,
         to_device="*",
+        embedder_info=embedder_info,
     )
 
 
@@ -119,9 +128,10 @@ def _delta_against(
     allowed: Optional[Callable[[MemoryNode], bool]],
     eps: float,
     to_device: str,
+    embedder_info: Optional[Dict] = None,
 ) -> Delta:
     gate = allowed if allowed is not None else (lambda n: preload_allowed(n))
-    delta = Delta(from_device=local.device_name, to_device=to_device)
+    delta = Delta(from_device=local.device_name, to_device=to_device, embedder=embedder_info)
 
     for n in local.all_nodes():
         if not gate(n):
@@ -141,7 +151,30 @@ def _delta_against(
 
 
 def apply_delta(store: MemoryStore, delta: Delta) -> Dict[str, int]:
-    """把差异子图并入本地库（内容冻结：原样落库）。返回计数统计。"""
+    """把差异子图并入本地库（内容冻结：原样落库）。返回计数统计。
+
+    一致性握手：若差分包携带 embedder 指纹且与本库记录的不一致
+    （两端嵌入模型不同，向量不可比），拒绝应用并返回 rejected 原因。
+    """
+    local_id = store._get_meta("embedder_id")
+    incoming = delta.embedder
+    if incoming and local_id:
+        try:
+            local = json.loads(local_id)
+        except Exception:
+            local = None
+        if local and incoming.get("fp") != local.get("fp"):
+            return {
+                "rejected": "embedder_mismatch",
+                "nodes_added": 0,
+                "nodes_skipped": 0,
+                "edges_applied": 0,
+                "local_fp": local.get("fp"),
+                "incoming_fp": incoming.get("fp"),
+            }
+    if incoming and not local_id:
+        store._set_meta("embedder_id", json.dumps(incoming, ensure_ascii=False))
+
     local_fps = {fingerprint(n.content) for n in store.all_nodes()}
     added = skipped = 0
     for d in delta.nodes:

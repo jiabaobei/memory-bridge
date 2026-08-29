@@ -79,10 +79,12 @@ class FolderTransport:
         plaintext: bool = False,
         allowed: Optional[Callable[[MemoryNode], bool]] = None,
         eps: float = EPSILON,
+        embedder_info: Optional[Dict] = None,
     ) -> Optional[str]:
         """把本设备"尚未发布过"的差分包写入通道。无新内容时返回 None。
 
         默认强制端到端加密；plaintext=True 时需调用方显式确认放弃加密。
+        embedder_info 为嵌入器自描述指纹，接收端据此做一致性握手。
         """
         if cryptor_needed(passphrase, plaintext):
             raise ValueError(
@@ -94,9 +96,15 @@ class FolderTransport:
             self._published_fps(),
             allowed=allowed if allowed is not None else (lambda n: preload_allowed(n)),
             eps=eps,
+            embedder_info=embedder_info,
         )
         if not delta.nodes and not delta.edges:
             return None
+
+        if embedder_info and not self.store._get_meta("embedder_id"):
+            self.store._set_meta(
+                "embedder_id", json.dumps(embedder_info, ensure_ascii=False)
+            )
 
         payload = delta.to_json()
         if passphrase:

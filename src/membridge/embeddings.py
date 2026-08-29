@@ -26,6 +26,20 @@ def cosine(a: List[float], b: List[float]) -> float:
     return dot / (na * nb)
 
 
+def embedder_identity(emb) -> dict:
+    """嵌入器的自描述指纹（仿 ncnn param 文件的自描述思想）。
+
+    返回 {"type", "name", "dim", "fp"}：跨设备同步前用 fp 做一致性握手——
+    两端 fp 不同说明嵌入模型不一致，向量不可比，必须拒绝互相同步向量。
+    """
+    name = getattr(emb, "model", None) or f"hashing-{getattr(emb, 'dim', 0)}"
+    dim = int(getattr(emb, "dim", 0) or 0)
+    fp = hashlib.blake2b(
+        f"{type(emb).__name__}:{name}:{dim}".encode("utf-8"), digest_size=8
+    ).hexdigest()
+    return {"type": type(emb).__name__, "name": name, "dim": dim, "fp": fp}
+
+
 class Embedder(Protocol):
     def embed(self, text: str) -> List[float]:  # pragma: no cover
         ...
