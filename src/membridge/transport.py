@@ -81,6 +81,7 @@ class FolderTransport:
         eps: float = EPSILON,
         embedder_info: Optional[Dict] = None,
         delta: Optional[Delta] = None,
+        force: bool = False,
     ) -> Optional[str]:
         """把本设备"尚未发布过"的差分包写入通道。无新内容时返回 None。
 
@@ -88,6 +89,10 @@ class FolderTransport:
         embedder_info 为嵌入器自描述指纹，接收端据此做一致性握手。
         delta 可传入预构差分包（自动同步引擎按重要度筛选后使用）；
         未传入时按"尚未发布过"自动计算。
+
+        force=True：忽略本地 published_fps 记录，重发全量。
+        用于云盘侧差分包丢失/被清理后重建通道——否则本地仍认为"已发布"，
+        记忆会被永久锁死、再也推不出去。
         """
         if cryptor_needed(passphrase, plaintext):
             raise ValueError(
@@ -97,7 +102,7 @@ class FolderTransport:
         if delta is None:
             delta = delta_unsent(
                 self.store,
-                self._published_fps(),
+                set() if force else self._published_fps(),
                 allowed=allowed if allowed is not None else (lambda n: preload_allowed(n)),
                 eps=eps,
                 embedder_info=embedder_info,
@@ -147,7 +152,10 @@ class FolderTransport:
     def fetch(
         self, passphrase: Optional[str] = None
     ) -> Dict[str, List]:
-        """应用 outbox 中来自其他设备的差分包，成功后把包移入 archive（T4）。
+        """应用通道中来自其他设备的差分包，outbox 的包成功后移入 archive（T4）。
+
+        同时扫描 outbox 与 archive：三台及以上设备时，先取的设备会把包移入 archive，
+        若只读 outbox，后续设备将永远取不到该包。指纹去重保证重复扫描不会重复入库。
 
         返回 {"applied": [(文件名, 来源设备, 结果)], "skipped": [(文件名, 原因)]}。
         单个包损坏/口令错误只跳过该包，不影响其他包。
@@ -156,15 +164,33 @@ class FolderTransport:
         skipped: List = []
         my_name = self.store.device_name
         outbox = os.path.join(self.root, OUTBOX)
+        store_fps = {fingerprint(n.content) for n in self.store.all_nodes()}
 
-        for fn in sorted(os.listdir(outbox)):
-            # 半可信同步目录：文件名必须为纯净 basename 且仅接受差分包后缀
-            safe = os.path.basename(fn.replace("\\", "/"))
-            if safe != fn or safe in (".", "..") or safe.endswith(".tmp"):
+        # (目录名, 是否允许归档) —— outbox 的包取完移入 archive，archive 的原地保留
+        scan_dirs = [
+            (outbox, True),
+            (os.path.join(self.root, ARCHIVE), False),
+        ]
+
+        # 先快照待处理清单：处理过程中 outbox 的包会被移入 archive，
+        # 若边扫边处理，同一个包会在本次 fetch 内被处理两次（去重后无害但冗余）
+        todo: List = []
+        for directory, allow_archive in scan_dirs:
+            if not os.path.isdir(directory):
                 continue
-            if not (safe.endswith(".json") or safe.endswith(".enc.json")):
-                continue
-            path = os.path.join(outbox, safe)
+            for fn in sorted(os.listdir(directory)):
+                # 半可信同步目录：文件名必须为纯净 basename 且仅接受差分包后缀
+                safe = os.path.basename(fn.replace("\\", "/"))
+                if safe != fn or safe in (".", "..") or safe.endswith(".tmp"):
+                    continue
+                if not (safe.endswith(".json") or safe.endswith(".enc.json")):
+                    continue
+                todo.append((directory, fn, allow_archive))
+
+        for directory, fn, allow_archive in todo:
+            path = os.path.join(directory, fn)
+            if not os.path.isfile(path):
+                continue  # 已被上一次 fetch 归档
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     raw = f.read()
@@ -174,7 +200,9 @@ class FolderTransport:
                         raise ValueError("未知信封格式")
                     if not passphrase:
                         raise ValueError("已加密的差分包需要口令")
-                    cryptor = PassphraseCryptor(passphrase, salt=bytes.fromhex(env["salt"]))
+                    cryptor = PassphraseCryptor(
+                        passphrase, salt=bytes.fromhex(env["salt"])
+                    )
                     payload = cryptor.decrypt(env["token"])
                 else:
                     payload = raw
@@ -187,12 +215,23 @@ class FolderTransport:
                 skipped.append((fn, "自己发布的包，等待其他设备取走"))
                 continue
 
+            # 已在库中的重复包（archive 重放场景）直接跳过，不重复应用
+            if delta.nodes and all(
+                fingerprint(d.get("content", "")) in store_fps for d in delta.nodes
+            ):
+                skipped.append((fn, "重复包：所有节点均已在库"))
+                continue
+
             result = apply_delta(self.store, delta)
             applied.append((fn, delta.from_device, result))
-            try:
-                os.replace(path, os.path.join(self.root, ARCHIVE, fn))
-            except OSError:
-                pass  # 归档失败不影响数据正确性，下次 fetch 会幂等重放
+            for d in delta.nodes:
+                store_fps.add(fingerprint(d["content"]))
+            # 只有 outbox 的包才需要归档；archive 里的原地保留，供后续设备补取
+            if allow_archive:
+                try:
+                    os.replace(path, os.path.join(self.root, ARCHIVE, fn))
+                except OSError:
+                    pass  # 归档失败不影响数据正确性，下次 fetch 会幂等重放
         return {"applied": applied, "skipped": skipped}
 
     # ---------- 已发布指纹的持久化 ----------

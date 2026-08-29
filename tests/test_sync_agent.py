@@ -1,8 +1,10 @@
-"""自动同步引擎测试：口令保险库、重要度规则、批量/立即上云决策。"""
+"""自动同步引擎测试：口令保险库、系统自动生成口令、重要度规则、批量/立即上云决策。"""
 
+import json
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -104,8 +106,6 @@ def test_autosync_routine_batches_and_local_never_uploaded():
     lines.clear()
     sync_agent.run_autosync(store_path=store.path, out=lines.append)
     assert any("批量上云" in ln for ln in lines)
-    import json
-
     pkg = [os.path.join(ch, "outbox", f) for f in os.listdir(os.path.join(ch, "outbox"))][0]
     from membridge.transport import PassphraseCryptor
 
@@ -115,3 +115,36 @@ def test_autosync_routine_batches_and_local_never_uploaded():
     assert all(n["content"] != secret.content for n in payload)  # local 永不上云
     assert len(payload) == 5
     store.close()
+
+
+def test_init_autogenerates_passphrase_into_vault(tmp_root=None):
+    """v0.6.0：init 时系统自动生成同步口令并托管，用户无需设置/记忆。"""
+    import membridge.wizard as wizard
+
+    home = Path(tempfile.mkdtemp(prefix="membridge-gen-"))
+    (home / ".workbuddy").mkdir()
+    wizard.HOME_DIR = home
+    try:
+        from membridge.wizard import InitOptions, run_init
+
+        lines = []
+        rc = run_init(
+            InitOptions(db=str(home / "mem.db"), device="测试机",
+                        netdisk_dir=str(home / "chan"), no_autosync=True,
+                        interactive=False),
+            out=lines.append,
+        )
+        assert rc == 0
+        text = "\n".join(lines)
+        assert "自动生成" in text
+        store = MemoryStore(str(home / "mem.db"))
+        key = vault.load_passphrase(store)
+        assert key and len(key) >= 24  # 系统生成的强随机口令
+        # 再次运行不重置已托管口令
+        run_init(InitOptions(db=str(home / "mem.db"), device="测试机",
+                             netdisk_dir=str(home / "chan"), no_autosync=True,
+                             interactive=False), out=lines.append)
+        assert vault.load_passphrase(MemoryStore(str(home / "mem.db"))) == key
+        store.close()
+    finally:
+        wizard.HOME_DIR = None

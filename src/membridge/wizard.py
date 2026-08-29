@@ -128,30 +128,16 @@ def run_init(opts: InitOptions, out=print) -> int:
         store.set_netdisk(netdisk)
         out(f"\n☁️ 云盘通道已配置（必做项完成）：{netdisk}")
 
-        # 一次性口令 → 本机保险库（DPAPI 加密，之后自动同步永不再问）
-        if interactive:
-            import getpass
+        # 同步口令由系统自动生成并托管进本机保险库——用户无需设置、无需记住。
+        # 配对新设备时用 membridge show-passphrase 查看（AI 替用户记住）。
+        from .vault import load_passphrase, save_passphrase
 
-            try:
-                raw = getpass.getpass("   设置自动同步口令（只输这一次，之后记忆按重要程度自动上云）: ")
-            except (EOFError, OSError):
-                raw = ""
-            if not raw:
-                out("   ℹ️ 口令用于加密上云的记忆：不设置，跨设备自动同步就无法生效。")
-                try:
-                    raw = getpass.getpass("   请自己想一个并输入（回车跳过则保持未配置）: ")
-                except (EOFError, OSError):
-                    raw = ""
-            if raw:
-                from .vault import save_passphrase
+        if load_passphrase(store) is None:
+            import secrets
 
-                try:
-                    save_passphrase(store, raw)
-                    out("   🔐 口令已存入本机保险库（DPAPI 加密，仅本机本用户可解）")
-                except OSError as exc:
-                    out(f"   ⚠️ 口令托管失败：{exc}")
-            else:
-                out("   ⏭ 未设置口令：自动同步暂不生效，重跑 membridge init 可补设")
+            save_passphrase(store, secrets.token_urlsafe(24))
+            out("   🔐 同步口令已由系统自动生成并托管（你无需记住；")
+            out("      以后配对新设备时，运行 membridge show-passphrase 即可查看）")
         else:
             from .vault import load_passphrase
 

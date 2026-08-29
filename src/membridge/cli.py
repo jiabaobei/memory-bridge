@@ -180,12 +180,15 @@ def cmd_publish(args: argparse.Namespace) -> int:
             passphrase=passphrase,
             plaintext=args.plaintext,
             embedder_info=embedder_identity(capabilities.best_embedder()),
+            force=getattr(args, "force", False),
         )
     except ImportError as exc:
         print(str(exc))
         return 2
     if path is None:
         print("没有需要发布的新记忆。")
+        if not getattr(args, "force", False):
+            print("（若云盘侧差分包已丢失，可加 --force 重发全量）")
     else:
         print(f"差分包已写入通道：{path}")
     return 0
@@ -273,9 +276,25 @@ def cmd_set_passphrase(args: argparse.Namespace) -> int:  # noqa: ARG001
         store.close()
         return 2
     save_passphrase(store, p1)
-    print("✅ 口令已存入本机保险库。自动同步已生效：重要记忆立即上云，")
-    print("   普通记忆每 15 分钟由计划任务检查（攒够 5 条或超 24 小时批量上云）。")
+    print("✅ 口令已更新（自动同步立即使用新口令；其他设备取回需改用同一新口令）。")
     store.close()
+    return 0
+
+
+def cmd_show_passphrase(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """配对新设备时展示系统托管的同步口令（AI 替用户记住，需要时才看）。"""
+    from .store import default_db_path
+    from .vault import load_passphrase
+
+    store = MemoryStore(default_db_path())
+    key = load_passphrase(store)
+    store.close()
+    if not key:
+        print("尚未配置：请先运行 membridge init。")
+        return 2
+    print("本机的自动同步口令是（配对新设备时，在对方设备输入同一个）：")
+    print(key)
+    print("\n提示：请仅在配对新设备时使用，勿泄露给他人。")
     return 0
 
 
@@ -338,6 +357,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--dir", required=True, help="同步文件夹（百度网盘同步盘/坚果云/OneDrive/U盘/局域网共享）")
     p.add_argument("--passphrase", default=None, help="端到端加密口令（推荐，收发需一致）")
     p.add_argument("--plaintext", action="store_true", help="明文写入（不推荐，需显式确认）")
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="忽略本地「已发布」记录，重发全量。"
+        "用于云盘侧差分包丢失后重建通道（否则记忆会被锁死、推不出去）",
+    )
     p.set_defaults(func=cmd_publish)
 
     p = sub.add_parser("fetch", help="从同步文件夹取回并应用其他设备的差分包")
@@ -376,8 +401,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.set_defaults(func=cmd_autosync)
 
     p = sub.add_parser("set-passphrase",
-                       help="设置/修改自动同步口令（存入本机加密保险库，只此一次）")
+                       help="手动设置/修改自动同步口令（通常无需使用：init 会自动生成并托管）")
     p.set_defaults(func=cmd_set_passphrase)
+
+    p = sub.add_parser("show-passphrase",
+                       help="配对新设备时查看系统托管的同步口令")
+    p.set_defaults(func=cmd_show_passphrase)
 
     p = sub.add_parser("doctor", help="环境自检：版本 / 记忆库 / 可选依赖 / 平台检测")
     p.set_defaults(func=cmd_doctor)

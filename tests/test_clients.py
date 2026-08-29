@@ -175,8 +175,8 @@ def test_wizard_netdisk_dir_creates_channel():
         text = "\n".join(lines)
         assert "云盘通道已配置" in text
         assert (ch / "outbox").is_dir() and (ch / "archive").is_dir()
-        # 自动同步未设口令时给出指引（不再输出手动 publish/fetch 命令）
-        assert "自动同步口令" in text
+        # 同步口令由系统自动生成并托管（用户无需设置）；不再输出手动 publish/fetch 命令
+        assert "自动生成" in text
         assert "publish --dir" not in text
     finally:
         wizard.HOME_DIR = None

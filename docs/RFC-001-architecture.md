@@ -120,8 +120,10 @@ v0 决策（按约定采用启发式，接口签名对齐论文）：
 
 - **通道自动选择规则**：按优先级取第一个检测到的同步盘——坚果云 > OneDrive >
   百度网盘同步盘 > iCloud > Dropbox > Google Drive；多盘共存不询问，其余列为备选。
-- **口令托管**：`vault.py` 用 Windows DPAPI（绑定当前用户，纯 ctypes 零依赖）
-  加密同步口令存于本库 meta；换机器/换账户不可解。
+- **口令托管**：同步口令由**系统自动生成**（强随机 token_urlsafe）并用 Windows
+  DPAPI（绑定当前用户，纯 ctypes 零依赖）加密存于本库 meta——用户全程无需
+  设置、无需记忆；配对新设备时用 `membridge show-passphrase` 查看一次即可
+  （`set-passphrase` 保留为手动覆盖）。换机器/换账户不可解。
 - **重要度规则**：重要记忆（confidence ≥ 0.8 / 访问 ≥ 2 次 / important 标签）
   立即上云；普通记忆 ≥ 5 条或距上次发布 ≥ 24h 批量上云；`migration=local`
   永不上云（PAMS 优先级最高）。
