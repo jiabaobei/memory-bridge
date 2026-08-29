@@ -1,0 +1,121 @@
+"""同步层：DSS 增量语义同步（论文 §3.4）。
+
+    ΔG_{A→B} = (G_A \\ G_B) ∪ {w_ij | w_ij^A ≠ w_ij^B}
+
+- 节点指纹：对规范化内容做哈希（语义哈希 h(n_i)），存在性比较 O(1)
+- 边差异量化：仅 |Δw| > ε 才同步，避免浮点漂移导致的无效传输
+- v0 覆盖差异计算 + 编码 + 应用（纯本地计算，无网络依赖）；
+  传输通道（端到端加密中继）在 Phase 2 接入，见 docs/threat-model.md
+
+发送端门控：migration=local 的节点在差分包生成前即被 PAMS L1 过滤，
+永不进入传输载荷。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional, Tuple
+
+from .node import MemoryNode
+from .privacy import preload_allowed
+from .store import MemoryStore
+
+EPSILON = 0.01  # 论文 §4.1 可复现性声明：DSS 边差异阈值 ε
+
+
+def fingerprint(content: str) -> str:
+    """节点语义哈希 h(n_i)：空白与大小写归一后的内容指纹。"""
+    normalized = re.sub(r"\s+", "", content.lower())
+    return hashlib.blake2b(normalized.encode("utf-8"), digest_size=16).hexdigest()
+
+
+@dataclass
+class Delta:
+    """一份跨设备同步差异（语义子图差分）。
+
+    nodes 为缺失节点的只读拷贝（内容冻结：接收端原样落库，不改写）；
+    edges 为权重差异超过 ε 的边。seq 字段为版本向量占位，Phase 2 启用。
+    """
+
+    from_device: str
+    to_device: str
+    nodes: List[Dict] = field(default_factory=list)
+    edges: List[Tuple[str, str, float]] = field(default_factory=list)
+    seq: int = 0
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "from_device": self.from_device,
+                "to_device": self.to_device,
+                "seq": self.seq,
+                "nodes": self.nodes,
+                "edges": [list(e) for e in self.edges],
+            },
+            ensure_ascii=False,
+        )
+
+    @classmethod
+    def from_json(cls, s: str) -> "Delta":
+        d = json.loads(s)
+        return cls(
+            from_device=d.get("from_device", "unknown"),
+            to_device=d.get("to_device", "unknown"),
+            nodes=d.get("nodes", []),
+            edges=[tuple(e) for e in d.get("edges", [])],
+            seq=d.get("seq", 0),
+        )
+
+
+def compute_delta(
+    local: MemoryStore,
+    remote: MemoryStore,
+    allowed: Optional[Callable[[MemoryNode], bool]] = None,
+    eps: float = EPSILON,
+) -> Delta:
+    """计算 local → remote 的差异子图（纯本地计算，可直接单机双库模拟）。"""
+    gate = allowed if allowed is not None else (lambda n: preload_allowed(n))
+    remote_fps = {fingerprint(n.content) for n in remote.all_nodes()}
+
+    delta = Delta(from_device=local.device_name, to_device=remote.device_name)
+    for n in local.all_nodes():
+        if not gate(n):
+            continue
+        if fingerprint(n.content) not in remote_fps:
+            delta.nodes.append(n.to_dict())
+
+    remote_node_ids = {n.node_id for n in remote.all_nodes()}
+    new_ids = {d["node_id"] for d in delta.nodes}
+    known_target = remote_node_ids | new_ids  # 新节点随差分包一起到达，其关联边可先行同步
+    for src, dst, w in local.all_edges():
+        if src not in known_target or dst not in known_target:
+            continue  # 边必须挂在接收端已知（或随本次到达）的节点上
+        rw = remote.edge_weight(src, dst)
+        if rw is None or abs(rw - w) > eps:
+            delta.edges.append((src, dst, w))
+    return delta
+
+
+def apply_delta(store: MemoryStore, delta: Delta) -> Dict[str, int]:
+    """把差异子图并入本地库（内容冻结：原样落库）。返回计数统计。"""
+    local_fps = {fingerprint(n.content) for n in store.all_nodes()}
+    added = skipped = 0
+    for d in delta.nodes:
+        node = MemoryNode.from_dict(d)
+        if fingerprint(node.content) in local_fps:
+            skipped += 1
+            continue
+        store.add(node)
+        local_fps.add(fingerprint(node.content))
+        added += 1
+
+    known = {n.node_id for n in store.all_nodes()}
+    edges_applied = 0
+    for src, dst, w in delta.edges:
+        if src in known and dst in known:
+            store.add_edge(src, dst, w)
+            edges_applied += 1
+    return {"nodes_added": added, "nodes_skipped": skipped, "edges_applied": edges_applied}

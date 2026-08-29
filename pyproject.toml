@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "membridge"
+version = "0.1.0"
+description = "记忆桥 MemoryBridge — 跨设备、跨平台的 AI 共享记忆层（CDSMP 架构的工程实现）"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "jiabaobei" }]
+keywords = [
+    "llm",
+    "agent",
+    "memory",
+    "mcp",
+    "cross-device",
+    "cross-platform",
+    "semantic-memory",
+    "cdsmp",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# 核心零依赖：仅用 Python 标准库，任何设备（含边缘设备）开箱即用
+dependencies = []
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2"]
+openai = ["openai>=1.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+membridge = "membridge.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jiabaobei/memory-bridge"
+Issues = "https://github.com/jiabaobei/memory-bridge/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
