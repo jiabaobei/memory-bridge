@@ -2,6 +2,15 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.1] - 2026-08-29
+
+文档勘误：README 各处同步 v0.2 能力，消除"WorkBuddy 仍在规划中"等过时表述。
+
+- 中英 README 能力表升级为 v0.2，补"一键接入平台"行
+- CLI 示例补齐 `init` / `doctor` / `publish` / `fetch`
+- "接入 MCP 客户端"章节改为"手动接入（init 已覆盖的平台可跳过）"
+- 架构图连接层补"平台技能（WorkBuddy 等）"；路线图 Phase 1 状态同步
+
 ## [0.2.0] - 2026-08-29
 
 新增 `membridge init` 一键接入向导：用户装完即让本机所有主流 AI 平台具备跨应用记忆共享。

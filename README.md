@@ -25,13 +25,14 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.1）
+## 当前能力（v0.2）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
+| 一键接入平台 | `membridge init` 自动检测并配置主流 AI 平台（MCP 自动写入 / WorkBuddy 技能自动安装 / 其余打印指南） | ✅ v0.2 |
 | SAN 语义关联网络 | 记忆条目 + 语义向量 + 关联边（`w_ij = λ·共现 + (1-λ)·余弦`） | ✅ v0 已实现 |
 | Path A 记忆注入 | 高置信记忆序列化为上下文块拼入 prompt（显式、可审计） | ✅ v0 已实现 |
-| MCP Server | 跨平台接入：Claude Code / Cursor / Cline 等即插即用 | ✅ v0 已实现 |
+| MCP Server | 任意 MCP 客户端即插即用；`--http` 远程模式供扣子 Coze 等平台接入 | ✅ v0 已实现 |
 | DSS 增量同步 | 语义指纹 + 边差异量化（ε=0.01），只传差异不传全量 | ✅ 已实现 |
 | 网盘中转传输 | 差分包写入百度网盘同步盘/坚果云/OneDrive 等同步文件夹即可跨设备，默认端到端加密，网盘服务商只见密文 | ✅ v0 已实现 |
 | PAMS 隐私门控 | L1 迁移标签（local 节点永不离开设备）+ L2 场景域隔离 | ✅ v0 已实现；L3 差分隐私后置 |
@@ -78,6 +79,7 @@ python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 
 ### CLI
 
 ```bash
+membridge init                                           # 一键接入本机检测到的 AI 平台
 membridge add "用户在开发记忆桥项目" --tags dev          # 写入记忆
 membridge search "记忆桥" -k 3                          # 语义检索
 membridge context "继续早上的讨论"                       # 输出 Path A 上下文块
@@ -86,12 +88,13 @@ membridge delta phone.db --out delta.json               # 生成到另一设备�
 membridge apply delta.json                              # 并入差分包
 membridge publish --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 发到网盘通道
 membridge fetch   --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 从网盘取回
-membridge stats
+membridge stats                                         # 记忆库概况
+membridge doctor                                        # 环境自检
 ```
 
-### 接入 MCP 客户端（跨平台）
+### 手动接入 MCP 客户端（`membridge init` 已覆盖的平台可跳过）
 
-Claude Code：
+个别平台如需手动配置，Claude Code：
 
 ```bash
 claude mcp add memory-bridge -- membridge mcp
@@ -119,7 +122,8 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 ```
               ┌────────────────────────────────────────────────┐
               │           跨平台接入层（连接器）                  │
-              │    MCP Server │ CLI │ SDK │ 移动端/插件(计划)    │
+              │  MCP Server │ CLI │ 平台技能（WorkBuddy 等）     │
+              │        移动端 / 浏览器插件（计划中）               │
               └───────────────────────┬────────────────────────┘
                                       │ 仅开放 Add / Search / Preload
    ┌──────────────────────────────────▼───────────────────────────────────┐
@@ -142,7 +146,7 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 ## 路线图
 
 - **Phase 0 ✅** 仓库与骨架、核心引擎 v0（SAN + Path A + DSS 本地差分 + PAMS L1/L2）、MCP Server
-- **Phase 1** 打磨安装体验（PyPI 发布、真实 embedding 后端、TS SDK）
+- **Phase 1 🔄** `membridge init` 一键接入 + doctor 自检 + WorkBuddy 技能 + 远程 MCP 已完成（v0.2）；待办：PyPI 发布、真实 embedding 后端、TS SDK
 - **Phase 2** 跨设备传输通道：E2E 加密中继（自托管）、版本向量、冲突解决
 - **Phase 3** TMT 边缘驻留（hot/cold 两级）、预加载时机、移动端接入、L2 授权流
 - **Phase 4** AEE 自适应进化（α / π_nav / θ_window）、Path B experimental 分支、L3 差分隐私、UEP 评测复现脚本

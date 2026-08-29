@@ -31,10 +31,11 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Manual guides | ByteDance TRAE and UI-based MCP clients (init prints steps) | ✅ |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.1)
+## Status (v0.2)
 
 | Capability | Status |
 |---|---|
+| One-command platform setup — `membridge init` auto-configures detected MCP clients and installs the WorkBuddy memory skill | ✅ implemented |
 | SAN (semantic association network, `w_ij = λ·co-occurrence + (1−λ)·cosine`) | ✅ implemented |
 | Path A injection (auditable context block) | ✅ implemented |
 | MCP server (Add / Search / Preload only) | ✅ implemented |
@@ -51,18 +52,23 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 git clone https://github.com/jiabaobei/memory-bridge.git
 cd memory-bridge
 pip install -e .
+membridge init             # wire up every AI platform detected on this machine
 python examples/demo.py    # phone memories → delta packet → PC, in 90 seconds
 ```
 
 CLI:
 
 ```bash
+membridge init                                      # one-command platform setup
 membridge add "Working on the MemoryBridge project" --tags dev
 membridge search "MemoryBridge" -k 3
 membridge context "continue this morning's discussion"
 membridge preload my-phone
 membridge delta phone.db --out delta.json
 membridge apply delta.json
+membridge publish --dir "D:/netdisk-sync/membridge" --passphrase my-secret
+membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
+membridge doctor
 ```
 
 MCP clients (Cursor `mcp.json`):
