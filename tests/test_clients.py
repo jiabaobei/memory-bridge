@@ -106,7 +106,9 @@ def test_manual_guides_cover_trae_and_coze():
 
 
 def test_wizard_noninteractive_all_mode():
+    import membridge.wizard as wizard
     home = _with_home()
+    wizard.HOME_DIR = home
     try:
         (home / ".workbuddy").mkdir()
         from membridge.wizard import InitOptions, run_init
@@ -120,11 +122,52 @@ def test_wizard_noninteractive_all_mode():
         assert rc == 0
         text = "\n".join(lines)
         assert "测试机" in text and "WorkBuddy" in text
+        # 云盘是第一步
+        assert text.index("云盘中转") < text.index("WorkBuddy")
         assert (home / ".workbuddy" / "skills" / "memory-bridge" / "SKILL.md").exists()
         assert (home / "mem.db").exists()  # 向导建库
         # 扣子等手动指南出现在输出里
         assert "--http" in text
     finally:
+        wizard.HOME_DIR = None
+        _restore()
+
+
+def test_wizard_netdisk_dir_creates_channel():
+    import membridge.wizard as wizard
+    home = _with_home()
+    wizard.HOME_DIR = home
+    try:
+        ch = home / "netdisk-sync" / "membridge"
+        from membridge.wizard import InitOptions, run_init
+
+        lines = []
+        rc = run_init(
+            InitOptions(db=str(home / "mem.db"), device="手机",
+                        netdisk_dir=str(ch), interactive=False),
+            out=lines.append,
+        )
+        assert rc == 0
+        text = "\n".join(lines)
+        assert "云盘通道就绪" in text
+        assert (ch / "outbox").is_dir() and (ch / "archive").is_dir()
+        assert "publish" in text and "fetch" in text
+    finally:
+        wizard.HOME_DIR = None
+        _restore()
+
+
+def test_detect_sync_roots_uses_injected_home():
+    import membridge.wizard as wizard
+    home = _with_home()
+    wizard.HOME_DIR = home
+    try:
+        assert wizard.detect_sync_roots() == []  # 临时目录下无同步盘
+        (home / "我的坚果云").mkdir()
+        found = wizard.detect_sync_roots()
+        assert found and found[0][0] == "坚果云"
+    finally:
+        wizard.HOME_DIR = None
         _restore()
 
 

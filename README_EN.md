@@ -52,7 +52,9 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 git clone https://github.com/jiabaobei/memory-bridge.git
 cd memory-bridge
 pip install -e .
-membridge init             # wire up every AI platform detected on this machine
+membridge init             # step one: set up the cloud-drive channel (auto-detects installed
+                           # sync clients, guides you to a free one otherwise), then wires up
+                           # every AI platform detected on this machine
 python examples/demo.py    # phone memories → delta packet → PC, in 90 seconds
 ```
 

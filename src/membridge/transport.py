@@ -20,8 +20,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import secrets
 import time
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from .dss import Delta, EPSILON, apply_delta, delta_unsent, fingerprint
@@ -113,12 +115,16 @@ class FolderTransport:
             suffix = ".delta.json"
 
         name = "{}-{}-{}n{}".format(
-            delta.from_device, int(time.time() * 1000), len(delta.nodes), suffix
+            _safe_device(delta.from_device), int(time.time() * 1000),
+            len(delta.nodes), suffix
         )
-        final_path = os.path.join(self.root, OUTBOX, name)
+        outbox_dir = os.path.realpath(os.path.join(self.root, OUTBOX))
+        final_path = os.path.join(outbox_dir, name)
+        # 允许目录包含性校验：设备名可能含路径成分，落点必须在 outbox 之内
+        if os.path.commonpath([outbox_dir, os.path.realpath(final_path)]) != outbox_dir:
+            raise ValueError(f"非法通道文件名：{name}")
         tmp_path = final_path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(body)
+        Path(tmp_path).write_text(body, encoding="utf-8")
         os.replace(tmp_path, final_path)  # 先写临时文件再改名，避免网盘读到半包
 
         self._remember_published(n for n in delta.nodes)
@@ -140,9 +146,13 @@ class FolderTransport:
         outbox = os.path.join(self.root, OUTBOX)
 
         for fn in sorted(os.listdir(outbox)):
-            path = os.path.join(outbox, fn)
-            if not os.path.isfile(path) or fn.endswith(".tmp"):
+            # 半可信同步目录：文件名必须为纯净 basename 且仅接受差分包后缀
+            safe = os.path.basename(fn.replace("\\", "/"))
+            if safe != fn or safe in (".", "..") or safe.endswith(".tmp"):
                 continue
+            if not (safe.endswith(".json") or safe.endswith(".enc.json")):
+                continue
+            path = os.path.join(outbox, safe)
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     raw = f.read()
@@ -183,6 +193,11 @@ class FolderTransport:
         fps = self._published_fps()
         fps.update(fingerprint(n["content"]) if isinstance(n, dict) else fingerprint(n.content) for n in nodes)
         self.store._set_meta("published_fps", json.dumps(sorted(fps)))
+
+
+def _safe_device(device: str) -> str:
+    """设备名出现在通道文件名里：消毒路径成分（设备名由用户自定义，属半可信输入）。"""
+    return re.sub(r'[\\/:*?"<>|]+', "_", device).strip(".") or "unknown"
 
 
 def cryptor_needed(passphrase: Optional[str], plaintext: bool) -> bool:

@@ -3,6 +3,7 @@
 import os
 import sys
 import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -120,6 +121,25 @@ def test_folder_transport_encrypted_roundtrip():
 
     # 正确口令补收
     assert len(tb.fetch(passphrase="跨设备口令123")["applied"]) == 1
+    a.close()
+    b.close()
+
+
+def test_publish_sanitizes_hostile_device_name():
+    """设备名属半可信输入：含路径成分时文件名必须被消毒，落点必须在 outbox 内。"""
+    a = _store("..\\..\\evil")
+    _add(a, (COFFEE,))
+    ch = _channel()
+    ta = transport.FolderTransport(ch, a)
+    path = ta.publish(plaintext=True)
+    base = os.path.basename(path)
+    assert ".." not in Path(base).parts  # ".." 不得作为路径成分出现
+    assert "\\" not in base and "/" not in base
+    assert os.path.dirname(os.path.realpath(path)) == os.path.realpath(os.path.join(ch, "outbox"))
+    # 接收端仍可正常应用
+    b = _store(DEV2)
+    tb = transport.FolderTransport(ch, b)
+    assert len(tb.fetch()["applied"]) == 1
     a.close()
     b.close()
 

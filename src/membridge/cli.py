@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
 from typing import List, Optional
 
 from . import dss, heat, injection, privacy, transport
@@ -87,6 +89,34 @@ def cmd_preload(args: argparse.Namespace) -> int:
     return 0
 
 
+def _safe_delta_file(p: str, *, for_write: bool, allowed_bases: List[str]) -> str:
+    """差异包路径校验：禁止 '..' 上跳、必须 .json、写入限允许目录（包含性校验）。"""
+    raw = (p or "").strip()
+    if not raw or ".." in raw.replace("\\", "/").split("/"):
+        raise SystemExit(f"路径不允许包含 '..' 上跳成分：{raw}")
+    norm = os.path.normpath(os.path.abspath(os.path.expanduser(raw)))
+    if os.path.splitext(norm)[1].lower() != ".json":
+        raise SystemExit(f"差异包必须是 .json 文件：{norm}")
+    if for_write:
+        bases = [os.path.realpath(os.path.abspath(b)) for b in allowed_bases]
+        try:
+            inside = any(
+                os.path.commonpath([b, os.path.realpath(norm)]) == b for b in bases
+            )
+        except ValueError:  # Windows 跨盘符无公共父目录
+            inside = False
+        if not inside:
+            raise SystemExit(
+                "写入位置必须在记忆库目录或当前目录内（防路径穿越）："
+                + " 或 ".join(set(bases))
+            )
+        if os.path.exists(norm):
+            raise SystemExit(f"目标已存在，拒绝覆盖：{norm}")
+    elif not os.path.isfile(norm):
+        raise SystemExit(f"差异包不存在：{norm}")
+    return norm
+
+
 def cmd_delta(args: argparse.Namespace) -> int:
     local = _open_store(args)
     remote = MemoryStore(args.remote_db)
@@ -94,9 +124,12 @@ def cmd_delta(args: argparse.Namespace) -> int:
     payload = delta.to_json()
     full = json.dumps([n.to_dict() for n in local.all_nodes()], ensure_ascii=False)
     if args.out:
-        with open(args.out, "w", encoding="utf-8") as f:
-            f.write(payload)
-        print(f"差异包已写入 {args.out}")
+        out_path = _safe_delta_file(
+            args.out, for_write=True,
+            allowed_bases=[os.path.dirname(os.path.abspath(local.path)), os.getcwd()],
+        )
+        Path(out_path).write_text(payload, encoding="utf-8")
+        print(f"差异包已写入 {out_path}")
     else:
         print(payload)
     ratio = (len(payload) / len(full) * 100) if full else 0.0
@@ -109,7 +142,8 @@ def cmd_delta(args: argparse.Namespace) -> int:
 
 def cmd_apply(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    with open(args.file, "r", encoding="utf-8") as f:
+    in_path = os.path.normpath(_safe_delta_file(args.file, for_write=False))
+    with open(in_path, "r", encoding="utf-8") as f:
         delta = dss.Delta.from_json(f.read())
     result = dss.apply_delta(store, delta)
     print(
@@ -180,6 +214,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             db=db,
             device=args.device,
             netdisk_dir=args.netdisk_dir,
+            skip_netdisk=args.skip_netdisk,
             all_mode=args.all,
         )
     )
@@ -256,11 +291,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.set_defaults(func=cmd_mcp)
 
     p = sub.add_parser("init",
-                       help="一键接入本机检测到的 AI 平台（MCP 自动配置 / WorkBuddy 技能 / 可选网盘）")
+                       help="一键接入本机检测到的 AI 平台（第一件事：配置云盘跨设备同步）")
     p.add_argument("--all", action="store_true",
                    help="非交互：配置所有检测到的平台，并打印其余平台的手动指南")
     p.add_argument("--netdisk-dir", default=None,
-                   help="直接指定网盘/同步文件夹路径（跳过询问）")
+                   help="直接指定云盘/同步文件夹路径（跳过询问）")
+    p.add_argument("--skip-netdisk", action="store_true",
+                   help="跳过云盘配置（仅单设备使用）")
     p.set_defaults(func=cmd_init)
 
     p = sub.add_parser("doctor", help="环境自检：版本 / 记忆库 / 可选依赖 / 平台检测")

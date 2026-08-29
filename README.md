@@ -72,9 +72,14 @@
 git clone https://github.com/jiabaobei/memory-bridge.git
 cd memory-bridge
 pip install -e .
-membridge init               # 一键接入本机检测到的 AI 平台（可选配网盘通道）
+membridge init               # 第一步就配好云盘通道（自动识别已装同步盘，没有则引导免费云盘），
+                             # 随后自动接入本机各 AI 平台
 python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 无缝继续
 ```
+
+> 为什么第一件事是配云盘？**记忆不上云，跨设备无从谈起。** 早上手机上的讨论，
+> 只有进了云盘通道，办公室的电脑才能接着继续。按论文测算你的记忆一年仅约 1GB，
+> 任何免费云盘都够用；且同步的是端到端加密的差分包——云盘服务商也看不到内容。
 
 ### CLI
 
