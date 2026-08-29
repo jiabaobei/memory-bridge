@@ -136,6 +136,12 @@ def run_init(opts: InitOptions, out=print) -> int:
                 raw = getpass.getpass("   设置自动同步口令（只输这一次，之后记忆按重要程度自动上云）: ")
             except (EOFError, OSError):
                 raw = ""
+            if not raw:
+                out("   ℹ️ 口令用于加密上云的记忆：不设置，跨设备自动同步就无法生效。")
+                try:
+                    raw = getpass.getpass("   请自己想一个并输入（回车跳过则保持未配置）: ")
+                except (EOFError, OSError):
+                    raw = ""
             if raw:
                 from .vault import save_passphrase
 

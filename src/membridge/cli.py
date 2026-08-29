@@ -252,6 +252,33 @@ def cmd_autosync(args: argparse.Namespace) -> int:
     return run_autosync(store_path=db, passphrase=args.passphrase)
 
 
+def cmd_set_passphrase(args: argparse.Namespace) -> int:  # noqa: ARG001
+    import getpass
+
+    from .store import default_db_path
+    from .vault import save_passphrase, supported
+
+    if not supported():
+        print("口令托管目前仅支持 Windows。")
+        return 2
+    store = MemoryStore(default_db_path())
+    if not store.netdisk:
+        print("尚未配置云盘通道：请先运行 membridge init。")
+        store.close()
+        return 2
+    p1 = getpass.getpass("设置自动同步口令（输入时不显示）: ")
+    p2 = getpass.getpass("再输入一次确认: ")
+    if not p1 or p1 != p2:
+        print("两次输入为空或不一致，未保存。")
+        store.close()
+        return 2
+    save_passphrase(store, p1)
+    print("✅ 口令已存入本机保险库。自动同步已生效：重要记忆立即上云，")
+    print("   普通记忆每 15 分钟由计划任务检查（攒够 5 条或超 24 小时批量上云）。")
+    store.close()
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: ARG001
     from .doctor import run_doctor
 
@@ -347,6 +374,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--passphrase", default=None,
                    help="口令（已托管到本机保险库时无需提供；供计划任务外的手动使用）")
     p.set_defaults(func=cmd_autosync)
+
+    p = sub.add_parser("set-passphrase",
+                       help="设置/修改自动同步口令（存入本机加密保险库，只此一次）")
+    p.set_defaults(func=cmd_set_passphrase)
 
     p = sub.add_parser("doctor", help="环境自检：版本 / 记忆库 / 可选依赖 / 平台检测")
     p.set_defaults(func=cmd_doctor)
