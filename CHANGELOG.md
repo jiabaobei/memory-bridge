@@ -19,6 +19,7 @@
 - 端到端演示 `examples/demo.py`（手机 → PC 跨设备记忆继承）
 - 测试：11 项核心测试（pytest 与零依赖运行器双兼容）
 - 文档：设计 RFC、路线图、隐私威胁模型、中英双语 README
+- 版本与发布规约：docs/VERSIONING.md（语义化版本、三处同步、发布流程）与 AGENTS.md 项目规约
 
 ### 设计决策（按约定后置）
 - Path B 隐藏状态融合 → Phase 4 experimental 分支

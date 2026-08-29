@@ -3,7 +3,9 @@
 > 🌉 **Give your AI a memory that follows you** — a cross-device × cross-platform shared memory layer.
 >
 > The official engineering implementation of CDSMP (Cross-Device Semantic Memory Persistence).
-> [中文文档](README.md) · [Design RFC](docs/RFC-001-architecture.md) · [Roadmap](docs/roadmap.md) · [Threat model](docs/threat-model.md)
+> [中文文档](README.md) · [Design RFC](docs/RFC-001-architecture.md) · [Roadmap](docs/roadmap.md) · [Threat model](docs/threat-model.md) · [Changelog](CHANGELOG.md)
+
+![Version](https://img.shields.io/github/v/release/jiabaobei/memory-bridge)
 
 ## The problem
 

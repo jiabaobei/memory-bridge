@@ -3,8 +3,9 @@
 > 🌉 **给 AI 一个跟着你走的记忆** —— 跨设备 × 跨平台的共享记忆层
 >
 > CDSMP（大模型跨设备语义记忆连续性架构）的官方工程实现。
-> [English](README_EN.md) · [设计 RFC](docs/RFC-001-architecture.md) · [路线图](docs/roadmap.md) · [隐私威胁模型](docs/threat-model.md)
+> [English](README_EN.md) · [设计 RFC](docs/RFC-001-architecture.md) · [路线图](docs/roadmap.md) · [隐私威胁模型](docs/threat-model.md) · [版本历程](CHANGELOG.md)
 
+![Version](https://img.shields.io/github/v/release/jiabaobei/memory-bridge)
 ![CI](https://github.com/jiabaobei/memory-bridge/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
