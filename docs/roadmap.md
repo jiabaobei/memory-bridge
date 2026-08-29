@@ -14,9 +14,12 @@
 
 ## Phase 1 — 可安装性与真实语义
 
+- [x] `membridge init` 一键接入向导：主流平台检测 + 自动配置 + 手动指南（v0.2.0）
+- [x] `membridge doctor` 环境自检（v0.2.0）
+- [x] WorkBuddy 记忆技能包自动安装（v0.2.0）
+- [x] `membridge mcp --http` 远程模式：扣子 Coze 等平台经 URL 接入（v0.2.0）
 - [ ] PyPI 发布（`pip install membridge`）
 - [ ] 真实 embedding 后端：OpenAI / 本地 bge（含 embedder 标识写库与校验）
-- [ ] `membridge doctor`：环境自检（embedder 一致性、库版本）
 - [ ] TypeScript SDK（覆盖 Cursor/Cline 生态的 TS 用户）
 - [ ] README 动图（GIF/视频）：跨设备演示
 
