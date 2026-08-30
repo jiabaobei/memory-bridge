@@ -2,6 +2,14 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.8.2] - 2026-08-31
+
+文档：论文预印本 Zenodo DOI 上架。
+
+- README / README_EN 的「与论文」章节加入 DOI 链接，bibtex 补 `doi` 字段
+  （10.5281/zenodo.22064641，v7 预印本，含完整 LaTeX 源文件包），中英对齐
+- 路线图版本总览补 v0.8.2 行
+
 ## [0.8.1] - 2026-08-30
 
 实战修复：用户确定正式库在 D 盘后，跨盘符差分导出被阻断。
