@@ -255,6 +255,20 @@ def test_default_db_path_prefers_env():
             os.environ.pop("MEMBRIDGE_DB", None)
 
 
+def test_safe_delta_file_cross_drive_bases():
+    """回归（v0.8.0 实战）：allowed_bases 跨盘符时（C 盘库 + D 盘 cwd），
+    commonpath 的 ValueError 不得否决其他合法基座——否则 D 盘正式库场景
+    永远写不出差分包。"""
+    from membridge.cli import _safe_delta_file
+
+    tmp = tempfile.mkdtemp()
+    target = os.path.join(tmp, "delta.json")
+    other_drive = "D:/__membridge_nonexistent__" if os.path.exists("D:/") else None
+    bases = [tmp] + ([other_drive] if other_drive else [])
+    result = _safe_delta_file(target, for_write=True, allowed_bases=bases)
+    assert os.path.normpath(result) == os.path.normpath(target)
+
+
 def test_path_a_serialization_and_confidence_filter():
     now = time.time()
     good = MemoryNode(content=LATTE, device="phone", confidence=0.9, created_at=now)

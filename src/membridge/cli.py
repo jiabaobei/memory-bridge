@@ -105,13 +105,15 @@ def _safe_delta_file(p: str, *, for_write: bool,
         raise SystemExit(f"差异包必须是 .json 文件：{norm}")
     if for_write and allowed_bases:
         bases = [os.path.realpath(os.path.abspath(b)) for b in allowed_bases]
-        try:
-            inside = any(
-                os.path.commonpath([b, os.path.realpath(norm)]) == b for b in bases
-            )
-        except ValueError:  # Windows 跨盘符无公共父目录
-            inside = False
-        if not inside:
+
+        def _within(base: str, target: str) -> bool:
+            try:
+                return os.path.commonpath([base, target]) == base
+            except ValueError:
+                return False  # Windows 跨盘符无公共父目录：仅该基座不匹配，不影响其他基座
+
+        target = os.path.realpath(norm)
+        if not any(_within(b, target) for b in bases):
             raise SystemExit(
                 "写入位置必须在记忆库目录或当前目录内（防路径穿越）："
                 + " 或 ".join(set(bases))
