@@ -117,7 +117,9 @@ Tools exposed: `memory_add`, `memory_search` (`as_context=true` returns the Path
 
 MemoryBridge implements the CDSMP architecture (v7 preprint, in Chinese). Components
 deliberately deferred in the paper (Path B, AEE, L3 differential privacy, full UEP
-benchmarking) are deferred in the same order here. Experimental figures cited from the
+benchmarking) are deferred in the same order here. The preprint is published on
+Zenodo (full LaTeX source included): [DOI 10.5281/zenodo.22064641](https://doi.org/10.5281/zenodo.22064641).
+Experimental figures cited from the
 paper (e.g., TCR 94.7%, bandwidth −89%, token overhead −87.1%) are **paper-reported
 values**; reproduction scripts ship in Phase 4.
 
@@ -126,6 +128,7 @@ values**; reproduction scripts ship in Phase 4.
   title  = {Cross-Device Semantic Memory Persistence: Zero-Cognitive-Overhead Inference via Edge Preloading and Multi-Level Hot Caching (CDSMP)},
   author = {Xian, Yujia},
   year   = {2026},
+  doi    = {10.5281/zenodo.22064641},
   note   = {Preprint v7}
 }
 ```
