@@ -1,13 +1,55 @@
-"""membridge doctor：环境自检（版本、记忆库、可选依赖、平台检测）。"""
+"""membridge doctor：环境自检（版本、记忆库位置健康、可选依赖、平台检测）。
+
+v0.8 新增「库位置健康」检查——真实故障教训：MEMBRIDGE_DB 指向临时/测试目录
+时 doctor 仍报 ✅，直到磁盘清理把库清掉才发现。现在显式告警：
+- 库位于 Temp/临时/生成目录
+- 环境变量库与默认库并存（疑似记忆库分裂）
+- 设备名未设置
+"""
 
 from __future__ import annotations
 
 import importlib
 import os
+import re
 import sys
 from pathlib import Path
 
 from . import clients
+
+
+def _db_health_hints(db: str) -> list:
+    """库位置健康启发式：返回告警列表（空 = 健康）。"""
+    hints: list = []
+    # 分段匹配，分隔符无关（/ 与 \ 混用均覆盖）
+    parts = re.split(r"[\\/]+", db.lower())
+    if any(
+        p in ("temp", "tmp", "$recycle.bin") or p.startswith("membridge-gen") or p.startswith("tmp")
+        for p in parts
+    ):
+        hints.append(
+            "记忆库位于临时/生成目录（可能被系统清理，或属测试残留）。"
+            "请运行 membridge init 重新配置，或把 MEMBRIDGE_DB 指向正式位置"
+            "（如 ~/.membridge/memory.db）"
+        )
+    env_db = os.environ.get("MEMBRIDGE_DB")
+    home_db = str(Path.home() / ".membridge" / "memory.db")
+    if env_db and os.path.isfile(home_db) and \
+            os.path.abspath(env_db).lower() != os.path.abspath(home_db).lower():
+        from .store import MemoryStore
+
+        try:
+            h = MemoryStore(home_db)
+            n = h.count_nodes()
+            h.close()
+        except Exception:
+            n = 0
+        if n:
+            hints.append(
+                f"默认位置 {home_db} 仍有 {n} 条记忆，与环境变量指定的库并存"
+                "——疑似记忆库分裂。确认正式库后，把 MEMBRIDGE_DB 统一指向它"
+            )
+    return hints
 
 
 def run_doctor(out=print) -> int:
@@ -16,13 +58,22 @@ def run_doctor(out=print) -> int:
     out(f"membridge 版本: {membridge.__version__}")
     out(f"Python: {sys.version.split()[0]}")
 
-    db = os.environ.get("MEMBRIDGE_DB") or str(Path.home() / ".membridge" / "memory.db")
-    out(f"记忆库: {db}")
+    from .store import default_db_path
+
+    env_db = os.environ.get("MEMBRIDGE_DB")
+    db = default_db_path()
+    src = "来自环境变量 MEMBRIDGE_DB" if env_db else "默认位置 ~/.membridge/memory.db"
+    out(f"记忆库（{src}）: {db}")
+
+    warnings: list = _db_health_hints(db)
+
     if os.path.exists(db):
         from .store import MemoryStore
 
         s = MemoryStore(db)
         out(f"  ✅ 可用（{s.count_nodes()} 条记忆，{s.count_edges()} 条关联，设备 {s.device_name}）")
+        if s.device_name == "unknown":
+            warnings.append("设备名未设置（记忆来源无法标注）——运行 membridge init 或 --device 设置")
         if s.netdisk:
             out(f"  ☁️ 云盘通道: {s.netdisk}")
             out("     （跨设备同步就绪；发布/取回命令见 membridge init 输出）")
@@ -31,6 +82,11 @@ def run_doctor(out=print) -> int:
         s.close()
     else:
         out("  ⚠️ 尚未创建（运行 membridge init 即可）")
+
+    if warnings:
+        out("\n健康提醒：")
+        for w in warnings:
+            out(f"  ⚠️ {w}")
 
     for label, module, extra in (("MCP 接入", "mcp", "mcp"),
                                  ("网盘端到端加密", "cryptography", "netdisk")):

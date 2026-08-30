@@ -129,10 +129,15 @@ def test_autosync_routine_batches_and_local_never_uploaded():
 
 def test_init_autogenerates_passphrase_into_vault(tmp_root=None):
     """v0.6.0：init 时系统自动生成同步口令并托管，用户无需设置/记忆。"""
+    import membridge.clients as clients
     import membridge.wizard as wizard
 
     home = Path(tempfile.mkdtemp(prefix="membridge-gen-"))
     (home / ".workbuddy").mkdir()
+    # ⚠️ clients 与 wizard 各有一份 HOME_DIR，必须同时注入——漏掉 clients 会让
+    # init 把真实 ~/.zcode/cli/config.json、~/.cursor/mcp.json 等改写到本临时目录
+    # （v0.8.0 前的真实事故：每跑一次测试，用户各平台配置就被劫持一次）
+    clients.HOME_DIR = home
     wizard.HOME_DIR = home
     try:
         from membridge.wizard import InitOptions, run_init
@@ -157,4 +162,5 @@ def test_init_autogenerates_passphrase_into_vault(tmp_root=None):
         assert vault.load_passphrase(MemoryStore(str(home / "mem.db"))) == key
         store.close()
     finally:
+        clients.HOME_DIR = None
         wizard.HOME_DIR = None

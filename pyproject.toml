@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "membridge"
-version = "0.7.0"
+version = "0.8.0"
 description = "记忆桥 MemoryBridge — 跨设备、跨平台的 AI 共享记忆层（CDSMP 架构的工程实现）"
 readme = "README.md"
 requires-python = ">=3.9"

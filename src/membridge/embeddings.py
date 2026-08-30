@@ -29,15 +29,26 @@ def cosine(a: List[float], b: List[float]) -> float:
 def embedder_identity(emb) -> dict:
     """嵌入器的自描述指纹（仿 ncnn param 文件的自描述思想）。
 
-    返回 {"type", "name", "dim", "fp"}：跨设备同步前用 fp 做一致性握手——
-    两端 fp 不同说明嵌入模型不一致，向量不可比，必须拒绝互相同步向量。
+    返回 {"type", "name", "dim", "revision", "fp"}：跨设备同步前用 fp 做一致性
+    握手——两端 fp 不同说明嵌入模型不一致，向量不可比，必须拒绝互相同步向量。
+
+    revision：嵌入模型版本标识（可选属性）。同名模型不同版本的向量不可比，
+    嵌入器可通过定义 `revision` 属性参与指纹计算；为空时指纹与 v0.7 完全一致
+    （跨版本握手兼容）。局限：embedding API 本身不暴露权重版本，OpenAI 嵌入器
+    默认无法自动感知静默升级——显式构造时建议传入 revision 固定版本。
     """
     name = getattr(emb, "model", None) or f"hashing-{getattr(emb, 'dim', 0)}"
     dim = int(getattr(emb, "dim", 0) or 0)
-    fp = hashlib.blake2b(
-        f"{type(emb).__name__}:{name}:{dim}".encode("utf-8"), digest_size=8
-    ).hexdigest()
-    return {"type": type(emb).__name__, "name": name, "dim": dim, "fp": fp}
+    revision = str(getattr(emb, "revision", "") or "")
+    basis = f"{type(emb).__name__}:{name}:{dim}" + (f":{revision}" if revision else "")
+    fp = hashlib.blake2b(basis.encode("utf-8"), digest_size=8).hexdigest()
+    return {
+        "type": type(emb).__name__,
+        "name": name,
+        "dim": dim,
+        "revision": revision,
+        "fp": fp,
+    }
 
 
 class Embedder(Protocol):
@@ -75,9 +86,13 @@ class HashingEmbedder:
 
 
 class OpenAIEmbedder:
-    """OpenAI embeddings API（可选依赖：pip install "membridge[openai]"）。"""
+    """OpenAI embeddings API（可选依赖：pip install "membridge[openai]"）。
 
-    def __init__(self, model: str = "text-embedding-3-small") -> None:
+    revision：模型版本标识。embedding API 不暴露权重版本，同名模型可能静默
+    升级导致向量不可比——在意跨设备一致性的用户应显式传入并保持各端一致。
+    """
+
+    def __init__(self, model: str = "text-embedding-3-small", revision: str = "") -> None:
         try:
             from openai import OpenAI  # 延迟导入，保持核心零依赖
         except ImportError as exc:  # pragma: no cover
@@ -86,6 +101,7 @@ class OpenAIEmbedder:
             ) from exc
         self._client = OpenAI()
         self.model = model
+        self.revision = revision
 
     def embed(self, text: str) -> List[float]:
         resp = self._client.embeddings.create(input=[text], model=self.model)

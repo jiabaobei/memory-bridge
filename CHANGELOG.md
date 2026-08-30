@@ -2,6 +2,86 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.8.0] - 2026-08-30
+
+工程修订版：对照外部评审与作者两大产品原则（**极度省 token、极度简化易上手**）
+的集中修订。全部改动保持核心零依赖、内容冻结原则与差分线上格式不变
+（v0.7 与 v0.8 设备仍可互相同步）。
+
+### 性能（规模化）
+
+- **增量建边**：`memory_add` 不再每次全量 O(n²) 重算并重写全部关联边，只计算
+  新节点与既有节点的关联（O(n)）；已有且权重未变的边不重写（写放大归零）。
+  全量重建收敛到新命令 `membridge rebuild-edges`（调整 λ/阈值后或异常时使用）
+- **embedding 存储 BLOB 化**：float32 定点存储替代 JSON 文本（256 维约 2.5KB→1KB，
+  1536 维约 30KB→6KB）；打开旧库时一次性自动迁移（`embedding_format` meta 幂等）；
+  差分线上格式保持 JSON 列表，跨版本握手不受影响
+- **检索两阶段 + 向量缓存**：先快扫 node_id+embedding 打分，仅对 top-k 取完整
+  节点；进程内向量缓存随写入同步失效
+
+### 正确性 / 健壮性
+
+- **MCP open_store 修复**：废除 CWD 相对 `"membridge.db"` 兜底，统一走
+  `default_db_path()`（环境变量 > `~/.membridge/memory.db`）——此前从任意目录
+  启动 MCP server 都会生成游离库，破坏「一台设备一份全局记忆库」语义
+- **fetch 异常分流**：差分包读取错误区分为数据问题（损坏/口令错 → skipped）
+  与环境问题（磁盘满/权限等 OSError → 新增 errors 通道），后者包保留原位、
+  下次 fetch 自动重试，并记 warning 日志；不再静默吞掉环境故障
+- **事务收敛**：新增 `MemoryStore.transaction()` 上下文管理器（事务深度计数），
+  add+建边、差分应用、指纹登记等收敛为单事务原子提交；未包事务的零散写仍
+  即时提交（跨连接立即可见，兼容 v0.7 行为）
+- **SQLite 并发**：WAL 日志模式 + busy_timeout=5000ms，MCP 多客户端并发读写
+  不再互相锁死
+- **embedder 指纹支持 revision**：嵌入器可通过 `revision` 属性参与一致性指纹
+  （同名模型不同版本不再误判一致）；为空时指纹与 v0.7 完全一致（握手兼容）。
+  `OpenAIEmbedder` 新增 revision 参数；诚实标注：embedding API 不暴露权重版本，
+  自动感知静默升级目前不可行
+
+### token 经济（产品原则落地）
+
+- **工具面收敛**：`memory_context` 并入 `memory_search(as_context=true)`，
+  MCP 工具 4 → 3——每个工具描述都常驻所有客户端会话
+- **检索相对阈值**：低于 top1×0.5 的弱命中不返回（`rel_floor` 可调，0 关闭），
+  噪声记忆不再白吃上下文 token
+- **add 端软引导**：工具描述明确"建议一句话一条"；单条超 200 字返回温和提示
+  建议拆分（不阻止写入，不违反内容冻结）
+
+### 易上手（产品原则落地）
+
+- **doctor 库位置健康**：新增告警——库位于临时/生成目录（测试残留/磁盘清理风险）、
+  环境变量库与 `~/.membridge` 默认库并存（疑似记忆库分裂）、设备名未设置；
+  自检输出标明库路径来源（环境变量 / 默认位置）
+
+### 测试隔离（真实事故修复）
+
+- **修复：跑测试会劫持用户真实平台配置**。init 向导测试只注入了
+  `wizard.HOME_DIR` 而漏掉 `clients.HOME_DIR`，且 `clients._appdata()`
+  无视 HOME 注入直读真实 `APPDATA`——每跑一次测试套件，真实的
+  `~/.zcode/cli/config.json`、`~/.cursor/mcp.json`、VS Code `mcp.json`
+  就被改写到一次性临时目录（`membridge-gen-*`），各平台 MCP 静默失联。
+  两处隔离洞均已修复，并新增金丝雀测试 `test_init_never_writes_real_user_configs`：
+  跑全套测试前后对真实配置做字节级比对，再泄漏立即红
+
+### 内容冻结（最高定律）加固
+
+- 新增 `test_content_freeze_across_all_flows`：建边、全量重建、检索记热度、
+  差分同步、旧库重开（BLOB 迁移）全走一遍后，所有记忆内容必须逐字节不变
+- 新增 `test_mcp_tool_surface_is_add_only`：MCP 工具面锁定为
+  {memory_add, memory_search, memory_preload}，未来任何改版引入
+  update/delete/summarize 类改写工具都会红
+
+### 文档
+
+- README / README_EN 能力表对齐 v0.8；CLI 示例补 `rebuild-edges`；
+  RFC-001 §10 工具表与 roadmap 新增「工程修订」节
+
+### 测试
+
+- 新增 9 项：增量建边、相对阈值、事务回滚、旧库 BLOB 迁移、embedder revision
+  语义、fetch OSError 分流（含重试闭环）、init 永不改写真实用户配置（金丝雀）、
+  全流程内容冻结、MCP 工具面只读边界
+- 测试 41 → 50 项，双模式（pytest / run_tests.py）全绿
+
 ## [0.7.0] - 2026-08-30
 
 环境变量口令 + 测试环境隔离 + 文档同步（WorkBuddy 协作贡献收编）。

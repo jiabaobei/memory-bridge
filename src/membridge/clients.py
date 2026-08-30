@@ -33,8 +33,15 @@ def _home() -> Path:
 
 
 def _appdata() -> Path:
-    """Windows %APPDATA%（其他平台给出合理回退，仅影响候选路径探测）。"""
+    """Windows %APPDATA%（其他平台给出合理回退，仅影响候选路径探测）。
+
+    v0.8.0 修复：HOME_DIR 注入时同步覆盖 APPDATA——否则 VS Code 等以
+    APPDATA 定位的平台在测试中会读写真实用户配置（真实事故：跑测试
+    把 ~/.zcode、~/.cursor、VS Code mcp.json 劫持到临时目录）。
+    """
     if os.name == "nt":
+        if HOME_DIR is not None:
+            return HOME_DIR / "AppData" / "Roaming"
         return Path(os.environ.get("APPDATA", str(_home() / "AppData" / "Roaming")))
     return _home() / ".config"
 

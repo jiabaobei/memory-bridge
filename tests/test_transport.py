@@ -1,9 +1,11 @@
 """传输通道（网盘中转）测试。"""
 
+import builtins
 import os
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -226,6 +228,39 @@ def test_fetch_missing_passphrase_message_is_actionable():
     assert result["applied"] == []
     reason = result["skipped"][0][1]
     assert "PASSPHRASE" in reason, reason  # 必须指名环境变量
+    a.close()
+    b.close()
+
+
+def test_fetch_oserror_goes_to_errors_and_retries():
+    """v0.8：环境错误（磁盘满/权限/I/O）必须与数据错误分流——进 errors、
+    包保留原位待重试，而不是被当成坏包静默跳过。"""
+    a = _store(DEV1)
+    _add(a, (COFFEE,))
+    ch = _channel()
+    transport.FolderTransport(ch, a).publish(plaintext=True)
+
+    b = _store(DEV2)
+    tb = transport.FolderTransport(ch, b)
+    real_open = builtins.open
+
+    def raising_open(path, *args, **kwargs):
+        # 只对通道里的差分包注入 PermissionError，其余文件照常
+        if str(path).endswith(".delta.json"):
+            raise PermissionError(13, "模拟权限/磁盘故障")
+        return real_open(path, *args, **kwargs)
+
+    with mock.patch("builtins.open", side_effect=raising_open):
+        result = tb.fetch()
+    assert result["applied"] == []
+    assert result["skipped"] == []
+    assert result["errors"] and "重试" in result["errors"][0][1]
+    # 包未被归档，仍在 outbox——下次 fetch 可重试
+    assert os.listdir(os.path.join(ch, "outbox"))
+
+    # 故障解除后重试成功
+    result2 = tb.fetch()
+    assert len(result2["applied"]) == 1 and b.count_nodes() == 1
     a.close()
     b.close()
 

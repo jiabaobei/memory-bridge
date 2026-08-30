@@ -177,19 +177,22 @@ def apply_delta(store: MemoryStore, delta: Delta) -> Dict[str, int]:
 
     local_fps = {fingerprint(n.content) for n in store.all_nodes()}
     added = skipped = 0
-    for d in delta.nodes:
-        node = MemoryNode.from_dict(d)
-        if fingerprint(node.content) in local_fps:
-            skipped += 1
-            continue
-        store.add(node)
-        local_fps.add(fingerprint(node.content))
-        added += 1
+    with store.transaction():
+        if incoming and not local_id:
+            store._set_meta("embedder_id", json.dumps(incoming, ensure_ascii=False))
+        for d in delta.nodes:
+            node = MemoryNode.from_dict(d)
+            if fingerprint(node.content) in local_fps:
+                skipped += 1
+                continue
+            store.add(node)
+            local_fps.add(fingerprint(node.content))
+            added += 1
 
-    known = {n.node_id for n in store.all_nodes()}
-    edges_applied = 0
-    for src, dst, w in delta.edges:
-        if src in known and dst in known:
-            store.add_edge(src, dst, w)
-            edges_applied += 1
+        known = {n.node_id for n in store.all_nodes()}
+        edges_applied = 0
+        for src, dst, w in delta.edges:
+            if src in known and dst in known:
+                store.add_edge(src, dst, w)
+                edges_applied += 1
     return {"nodes_added": added, "nodes_skipped": skipped, "edges_applied": edges_applied}

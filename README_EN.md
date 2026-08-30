@@ -31,10 +31,15 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Manual guides | ByteDance TRAE and UI-based MCP clients (init prints steps) | ✅ |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.7)
+## Status (v0.8)
 
 | Capability | Status |
 |---|---|
+| **Incremental edge building** — on write, only the new node is paired against existing nodes (O(n), no more full O(n²) recompute per add); `membridge rebuild-edges` is the explicit full-rebuild exit | ✅ v0.8 |
+| **Engineering robustness** — SQLite WAL concurrency + single atomic transaction (add + edge building, delta apply); delta packets split into "data error → skip" vs "environment error → kept for retry" | ✅ v0.8 |
+| **Token economy** — MCP tools consolidated to 3 (`memory_context` merged into `memory_search`), retrieval relative-threshold filters weak hits, oversized memories get a soft "one sentence per memory" hint on write | ✅ v0.8 |
+| **doctor location health** — warns when the DB sits in a temp/generated directory, when the default DB and the env-var DB coexist (likely a split store), or when the device name is unset | ✅ v0.8 |
+| **Storage & retrieval** — embeddings stored as float32 BLOBs (⅓–⅕ of the JSON size, legacy DBs auto-migrate on open); two-phase search with an in-process vector cache | ✅ v0.8 |
 | One-command setup — `membridge init`: mandatory cloud channel (auto-picked by priority rule), **sync passphrase auto-generated & vaulted (DPAPI)**, scheduled auto-sync every 15 min, platform auto-config + WorkBuddy skill install | ✅ implemented |
 | Auto-sync engine — important memories upload immediately, routine ones batched (≥5 or ≥24h), `local`-tagged never leave the device | ✅ implemented |
 | SAN (semantic association network, `w_ij = λ·co-occurrence + (1−λ)·cosine`) | ✅ implemented |
@@ -76,7 +81,9 @@ membridge apply delta.json
 membridge publish --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge publish --dir "D:/netdisk-sync/membridge" --force   # rebuild a wiped channel
 membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
-membridge doctor
+membridge stats
+membridge rebuild-edges                             # full rebuild of association edges (regular adds build incrementally)
+membridge doctor                                    # env self-check (incl. DB location health)
 ```
 
 The passphrase can also come from the `MEMBRIDGE_PASSPHRASE` environment variable.
@@ -104,7 +111,7 @@ MCP clients (Cursor `mcp.json`):
 }
 ```
 
-Tools exposed: `memory_add`, `memory_search`, `memory_context`, `memory_preload` — strictly limited to the UEP permission boundary; there is no "rewrite memory" tool.
+Tools exposed: `memory_add`, `memory_search` (`as_context=true` returns the Path A injection block directly), `memory_preload` — strictly limited to the UEP permission boundary; there is no "rewrite memory" tool.
 
 ## Relationship to the paper
 

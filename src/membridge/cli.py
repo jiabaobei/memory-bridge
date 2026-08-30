@@ -8,6 +8,7 @@
   membridge delta C:/sync/phone.db --out delta.json   # 生成 → 另一设备的差异包
   membridge apply delta.json                          # 并入差异包
   membridge stats
+  membridge rebuild-edges                # 全量重建语义关联边（常规 add 只增量建边）
   membridge mcp                                       # 启动 MCP server
 """
 
@@ -45,8 +46,6 @@ def _open_store(args: argparse.Namespace) -> MemoryStore:
 def cmd_add(args: argparse.Namespace) -> int:
     store = _open_store(args)
     embedder = capabilities.best_embedder()
-    if not store._get_meta("embedder_id"):
-        store._set_meta("embedder_id", json.dumps(embedder_identity(embedder), ensure_ascii=False))
     node = MemoryNode(
         content=args.text,
         embedding=embedder.embed(args.text),
@@ -55,8 +54,12 @@ def cmd_add(args: argparse.Namespace) -> int:
         device=args.device or store.device_name,
         migration=args.migration or default_migration(args.text),
     )
-    store.add(node)
-    new_edges = build_edges(store, embedder)
+    # v0.8：add + 增量建边单事务提交；只算新节点与既有节点的关联（O(n)）
+    with store.transaction():
+        if not store._get_meta("embedder_id"):
+            store._set_meta("embedder_id", json.dumps(embedder_identity(embedder), ensure_ascii=False))
+        store.add(node)
+        new_edges = build_edges(store, embedder, only_new=node)
     print(f"已记忆 {node.node_id}（场景 {node.scene}，迁移 {node.migration}，新增关联边 {len(new_edges)} 条）")
     return 0
 
@@ -208,8 +211,23 @@ def cmd_fetch(args: argparse.Namespace) -> int:
               f"新增节点 {r['nodes_added']}，去重跳过 {r['nodes_skipped']}，应用边 {r['edges_applied']}")
     for fn, reason in result["skipped"]:
         print(f"跳过 {fn}：{reason}")
-    if not result["applied"] and not result["skipped"]:
+    for fn, reason in result.get("errors", []):
+        print(f"环境错误 {fn}（包已保留，下次 fetch 自动重试）：{reason}")
+    if not result["applied"] and not result["skipped"] and not result.get("errors"):
         print("通道中暂无新差分包。")
+    return 0
+
+
+def cmd_rebuild_edges(args: argparse.Namespace) -> int:
+    """全量重建语义关联边（v0.8：常规 add 只增量建边，这里是显式重建出口）。"""
+    store = _open_store(args)
+    embedder = capabilities.best_embedder()
+    with store.transaction():
+        added = build_edges(store, embedder, min_weight=args.min_weight)
+    print(
+        f"全量重建完成：当前 {store.count_edges()} 条关联，"
+        f"本次新写 {len(added)} 条（已有且权重未变的边不重写）"
+    )
     return 0
 
 
@@ -372,6 +390,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("stats", help="记忆库统计")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser(
+        "rebuild-edges",
+        help="全量重建语义关联边（常规 add 已增量建边；调整 λ/阈值后或异常时使用）",
+    )
+    p.add_argument("--min-weight", type=float, default=0.15,
+                   help="低于该权重的关联不落库（默认 0.15）")
+    p.set_defaults(func=cmd_rebuild_edges)
 
     p = sub.add_parser("mcp", help="启动 MCP server（供 Claude Code / Cursor 等接入）")
     p.add_argument("--http", action="store_true",

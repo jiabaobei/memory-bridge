@@ -4,6 +4,9 @@
 对应论文 UEP 的权限边界 —— 只开放 Add 与 Search/Preload 两类操作，
 不提供任何改写记忆内容的工具（内容冻结原则）。
 
+v0.8 工具面收敛（省 token）：memory_context 并入 memory_search（as_context
+参数），工具从 4 个减为 3 个——每个工具描述都会常驻所有客户端会话。
+
 启动：membridge mcp   （或 python -m membridge mcp）
 环境变量：MEMBRIDGE_DB 指定记忆库路径；MEMBRIDGE_DEVICE 指定本机设备名。
 """
@@ -11,22 +14,32 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import sys
 from typing import Optional
 
 from . import capabilities
-from .embeddings import Embedder, HashingEmbedder, embedder_identity
+from .embeddings import Embedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
 from .san import build_edges
-from .store import MemoryStore
+from .store import MemoryStore, default_db_path
 
 DB_ENV = "MEMBRIDGE_DB"
 DEVICE_ENV = "MEMBRIDGE_DEVICE"
 
+# add 端软引导阈值：超过该长度的记忆建议拆分（检索注入更省 token）
+SOFT_LENGTH_HINT = 200
+
 
 def open_store(store_path: Optional[str] = None) -> MemoryStore:
-    db = store_path or os.environ.get(DB_ENV) or "membridge.db"
+    """库路径与 CLI / init 同源：显式参数 > MEMBRIDGE_DB > ~/.membridge/memory.db。
+
+    v0.8 修复：不再退回 CWD 相对 "membridge.db"——MCP server 从任意目录启动
+    都会在该目录生成游离库，破坏「一台设备一份全局记忆库」语义。
+    """
+    db = store_path or default_db_path()
     store = MemoryStore(db)
     if store.device_name == "unknown":
         store.set_device(os.environ.get(DEVICE_ENV) or os.path.basename(db))
@@ -47,14 +60,13 @@ def create_server(
         ) from exc
 
     store = open_store(store_path)
-    embedder = capabilities.best_embedder()
+    embedder = embedder or capabilities.best_embedder()
     if not store._get_meta("embedder_id"):
-        from .embeddings import embedder_identity
-
-        store._set_meta(
-            "embedder_id",
-            json.dumps(embedder_identity(embedder), ensure_ascii=False),
-        )
+        with store.transaction():
+            store._set_meta(
+                "embedder_id",
+                json.dumps(embedder_identity(embedder), ensure_ascii=False),
+            )
 
     settings = {}
     if host:
@@ -67,6 +79,7 @@ def create_server(
     def memory_add(text: str, tags: str = "", migration: str = "") -> str:
         """写入一条跨设备记忆（Add 阶段）。
 
+        建议一句话一条，避免长段落——条目越短，检索注入越省 token。
         tags: 逗号分隔的标签；migration: 可选 local/edge/cloud（默认按内容自动判定）。
         """
         node = MemoryNode(
@@ -77,27 +90,34 @@ def create_server(
             device=store.device_name,
             migration=migration.strip() or default_migration(text),
         )
-        store.add(node)
-        build_edges(store, embedder)
-        return f"已记忆（{node.node_id}，场景 {node.scene}，迁移 {node.migration}）"
+        with store.transaction():
+            store.add(node)
+            build_edges(store, embedder, only_new=node)
+        msg = f"已记忆（{node.node_id}，场景 {node.scene}，迁移 {node.migration}）"
+        if len(text) > SOFT_LENGTH_HINT:
+            msg += (
+                f"。提示：本条超过 {SOFT_LENGTH_HINT} 字，"
+                "下次建议拆成一句话一条，检索时更省 token、更准"
+            )
+        return msg
 
     @mcp.tool()
-    def memory_search(query: str, k: int = 5) -> str:
-        """按语义检索记忆（Search 阶段），返回最相关的 k 条。"""
+    def memory_search(query: str, k: int = 5, as_context: bool = False) -> str:
+        """按语义检索记忆（Search 阶段），返回最相关的 k 条（弱命中已按相对阈值过滤）。
+
+        as_context=true 时返回可注入系统提示的记忆上下文块
+        （Path A 显式注入，带时间 / 设备 / 场景标注）。
+        """
         hits = store.search(embedder.embed(query), k=k)
+        if as_context:
+            from .injection import serialize
+
+            return serialize(n for n, _ in hits)
         if not hits:
             return "（暂无相关记忆）"
         return "\n".join(
             f"[{i + 1}]（相似度 {s:.2f}）{n.content}" for i, (n, s) in enumerate(hits)
         )
-
-    @mcp.tool()
-    def memory_context(query: str, k: int = 5) -> str:
-        """获取可注入系统提示的跨设备记忆上下文块（Path A 显式注入）。"""
-        from .injection import serialize
-
-        hits = store.search(embedder.embed(query), k=k)
-        return serialize(n for n, _ in hits)
 
     @mcp.tool()
     def memory_preload(target_device: str, k: int = 8) -> str:
@@ -115,6 +135,12 @@ def create_server(
 
 def main(host: Optional[str] = None, port: Optional[int] = None,
          transport: str = "stdio") -> None:
+    # stdio 模式下 stdout 是 MCP 协议通道：日志必须走 stderr
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    )
     settings = {}
     if host:
         settings["host"] = host

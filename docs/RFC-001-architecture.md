@@ -155,10 +155,12 @@ v0 决策（按约定采用启发式，接口签名对齐论文）：
 
 | 工具 | 论文阶段 | 说明 |
 |---|---|---|
-| `memory_add` | Add（写） | 自动场景分类 + 迁移标签判定 |
-| `memory_search` | Search（读） | 语义 Top-K，命中计入热度 |
-| `memory_context` | Search + 注入 | 直接返回 Path A 上下文块 |
+| `memory_add` | Add（写） | 自动场景分类 + 迁移标签判定；增量建边；超 200 字软引导拆分（v0.8） |
+| `memory_search` | Search（读） | 语义 Top-K，命中计入热度；相对阈值滤弱命中；`as_context=true` 直接返回 Path A 上下文块（v0.8 并入原 `memory_context`） |
 | `memory_preload` | Preload | 热度候选（PAMS 门控后） |
+
+> v0.8 工具面收敛：原 `memory_context` 并入 `memory_search(as_context=true)`，
+> 工具数 4 → 3——每个工具描述都常驻所有客户端会话，省 token 从工具面开始。
 
 **刻意不提供**：任何改写/删除/摘要记忆的工具（内容冻结），以及读取
 `migration=local` 内容的跨设备工具。

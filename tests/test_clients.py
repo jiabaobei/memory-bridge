@@ -208,3 +208,40 @@ def test_doctor_runs_without_error():
         assert any("平台检测" in ln for ln in lines)
     finally:
         _restore()
+
+
+def test_init_never_writes_real_user_configs():
+    """回归（v0.8.0）：init 测试曾因漏注入 clients.HOME_DIR，把真实的
+    ZCode / Cursor / VS Code 配置改写到临时 membridge-gen-* 目录——
+    用户每平台的 MCP 配置被测试劫持。此金丝雀保证：跑全套测试时，
+    真实用户配置必须字节级不变。"""
+    appdata = os.environ.get("APPDATA", "")
+    real_files = [
+        Path.home() / ".zcode" / "cli" / "config.json",
+        Path.home() / ".cursor" / "mcp.json",
+        Path(appdata) / "Code" / "User" / "mcp.json" if appdata else None,
+    ]
+    snapshot = {}
+    for p in real_files:
+        if p and p.is_file():
+            snapshot[p] = p.read_bytes()
+
+    home = _with_home()
+    import membridge.wizard as wizard
+
+    wizard.HOME_DIR = home
+    try:
+        from membridge.wizard import InitOptions, run_init
+
+        rc = run_init(
+            InitOptions(db=str(home / "mem.db"), device="测试机",
+                        all_mode=True, no_autosync=True, interactive=False),
+            out=lambda *_: None,
+        )
+        assert rc == 0
+    finally:
+        wizard.HOME_DIR = None
+        _restore()
+
+    for p, data in snapshot.items():
+        assert p.read_bytes() == data, f"真实用户配置被测试改写：{p}"

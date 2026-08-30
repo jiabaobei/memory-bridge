@@ -25,10 +25,15 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.7）
+## 当前能力（v0.8）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
+| 增量建边 | 写入时只计算新节点与既有节点的关联（O(n)，不再每次全量 O(n²) 重算）；`membridge rebuild-edges` 提供全量重建出口 | ✅ v0.8 |
+| 工程健壮性 | SQLite WAL 并发 + 单事务原子提交（add+建边、差分应用）；差分包"数据错误跳过 / 环境错误保留重试"分流 | ✅ v0.8 |
+| token 经济 | MCP 工具收敛为 3 个（context 并入 search）、检索相对阈值滤除弱命中、超长记忆写入软引导拆分 | ✅ v0.8 |
+| doctor 库位置健康 | 库位于临时/生成目录、多库分裂（默认库与环境变量库并存）、设备名未设置——显式告警 | ✅ v0.8 |
+| 存储与检索优化 | embedding 以 float32 BLOB 存储（体积降为 JSON 的 1/3～1/5，旧库打开自动迁移），检索两阶段 + 进程内向量缓存 | ✅ v0.8 |
 | 一键接入平台 | `membridge init` 自动检测并配置主流 AI 平台（MCP 自动写入 / WorkBuddy 技能自动安装 / 其余打印指南） | ✅ v0.2 |
 | 全自动同步 | 云盘自动选定（多盘按优先级）、口令由系统生成并托管（用户无感）、按重要程度自动上云（计划任务每 15 分钟），零点击 | ✅ v0.5/v0.6 |
 | 环境变量口令 | 口令支持 `MEMBRIDGE_PASSPHRASE` 环境变量（优先级：参数 > 环境变量 > 保险库），自动化/CI 场景免交互 | ✅ v0.7 |
@@ -99,7 +104,8 @@ membridge apply delta.json                              # 并入差分包
 membridge publish --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 发到网盘通道
 membridge fetch   --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 从网盘取回
 membridge stats                                         # 记忆库概况
-membridge doctor                                        # 环境自检
+membridge rebuild-edges                                 # 全量重建语义关联边（常规 add 只增量建边）
+membridge doctor                                        # 环境自检（含库位置健康：临时目录/多库分裂告警）
 membridge autosync                                      # 自动同步（init 已注册计划任务，每 15 分钟自动运行）
 membridge show-passphrase                               # 配对新设备时查看同步口令（系统已替你生成并托管）
 membridge set-passphrase                                # 手动设置/修改同步口令（一般不需要）
@@ -140,8 +146,9 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 }
 ```
 
-可用工具：`memory_add`（Add）、`memory_search` / `memory_context`（Search）、
-`memory_preload`（Preload）——严格限定在 UEP 权限边界内，没有"改写记忆"的工具。
+可用工具：`memory_add`（Add）、`memory_search`（Search，`as_context=true` 直接返回
+Path A 注入块）、`memory_preload`（Preload）——严格限定在 UEP 权限边界内，
+没有"改写记忆"的工具。
 
 ## 架构一览
 

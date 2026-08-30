@@ -111,6 +111,7 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
             continue
         out(f"已取回 {src} 的记忆：新增 {r['nodes_added']} 条")
     out(f"自动同步完成（发布 {published} 个差分包）")
-    store._set_meta(LAST_PUBLISH_KEY, str(time.time()))
+    with store.transaction():
+        store._set_meta(LAST_PUBLISH_KEY, str(time.time()))
     store.close()
     return 0

@@ -78,7 +78,8 @@ def save_passphrase(store: MemoryStore, passphrase: str) -> None:
     if not supported():
         raise OSError("自动同步口令托管目前仅支持 Windows")
     blob = _protect(passphrase.encode("utf-8"))
-    store._set_meta(_VAULT_KEY, base64.b64encode(blob).decode("ascii"))
+    with store.transaction():
+        store._set_meta(_VAULT_KEY, base64.b64encode(blob).decode("ascii"))
 
 
 def load_passphrase(store: MemoryStore) -> Optional[str]:

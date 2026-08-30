@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import re
 import secrets
@@ -30,6 +31,8 @@ from .dss import Delta, EPSILON, apply_delta, delta_unsent, fingerprint
 from .node import MemoryNode
 from .privacy import preload_allowed
 from .store import MemoryStore
+
+logger = logging.getLogger(__name__)
 
 OUTBOX = "outbox"
 ARCHIVE = "archive"  # 论文 T4 云归档的工程落位
@@ -157,11 +160,18 @@ class FolderTransport:
         同时扫描 outbox 与 archive：三台及以上设备时，先取的设备会把包移入 archive，
         若只读 outbox，后续设备将永远取不到该包。指纹去重保证重复扫描不会重复入库。
 
-        返回 {"applied": [(文件名, 来源设备, 结果)], "skipped": [(文件名, 原因)]}。
-        单个包损坏/口令错误只跳过该包，不影响其他包。
+        返回 {"applied": [(文件名, 来源设备, 结果)], "skipped": [(文件名, 原因)],
+        "errors": [(文件名, 原因)]}。
+        - skipped：**数据问题**（包损坏 / 口令错误 / 非差分包 / 重复包）——该包
+          内容有问题，重试无意义，跳过不影响其他包。
+        - errors：**环境问题**（磁盘满 / 权限 / I/O 故障）——包本身完好且保留
+          在原位，下次 fetch 自动重试；同时记 warning 日志。
+
+        单个包失败只跳过该包，不影响其他包。
         """
         applied: List = []
         skipped: List = []
+        errors: List = []
         my_name = self.store.device_name
         outbox = os.path.join(self.root, OUTBOX)
         store_fps = {fingerprint(n.content) for n in self.store.all_nodes()}
@@ -217,7 +227,12 @@ class FolderTransport:
                 else:
                     payload = raw
                 delta = Delta.from_json(payload)
-            except Exception as exc:  # 网盘半写入 / 口令错误 / 非差分包
+            except OSError as exc:
+                # 环境问题（磁盘满/权限/I/O）：包保留原位，下次 fetch 重试
+                logger.warning("差分包 %s 读取失败（环境错误，将重试）: %s", fn, exc)
+                errors.append((fn, f"环境错误（包已保留，下次 fetch 自动重试）：{exc}"))
+                continue
+            except Exception as exc:  # 数据问题：包损坏 / 口令错误 / 非差分包
                 skipped.append((fn, str(exc)))
                 continue
 
@@ -242,7 +257,7 @@ class FolderTransport:
                     os.replace(path, os.path.join(self.root, ARCHIVE, fn))
                 except OSError:
                     pass  # 归档失败不影响数据正确性，下次 fetch 会幂等重放
-        return {"applied": applied, "skipped": skipped}
+        return {"applied": applied, "skipped": skipped, "errors": errors}
 
     # ---------- 已发布指纹的持久化 ----------
 
@@ -253,7 +268,8 @@ class FolderTransport:
     def _remember_published(self, nodes) -> None:
         fps = self._published_fps()
         fps.update(fingerprint(n["content"]) if isinstance(n, dict) else fingerprint(n.content) for n in nodes)
-        self.store._set_meta("published_fps", json.dumps(sorted(fps)))
+        with self.store.transaction():
+            self.store._set_meta("published_fps", json.dumps(sorted(fps)))
 
 
 def _safe_device(device: str) -> str:
