@@ -31,6 +31,7 @@ from .embeddings import cosine
 from .node import MemoryNode
 
 EMBEDDING_FORMAT = "f32-blob-v1"  # meta 中记录的 embedding 存储格式
+GAP_LIMIT = 20                    # 缺口发现最多保留的零命中查询条数（v0.9）
 
 
 def default_db_path() -> str:
@@ -100,6 +101,7 @@ class MemoryStore:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.executescript(_SCHEMA)
+        self._migrate_columns()
         self.conn.commit()
         # 检索向量缓存：node_id → (存储字节, 解码后向量)；add 时同步更新
         self._vec_cache: Dict[str, Tuple[bytes, List[float]]] = {}
@@ -159,7 +161,7 @@ class MemoryStore:
     def add(self, node: MemoryNode) -> MemoryNode:
         blob = _pack_vec(node.embedding)
         self.conn.execute(
-            "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 node.node_id,
                 node.content,
@@ -172,6 +174,7 @@ class MemoryStore:
                 node.created_at,
                 node.last_access,
                 node.access_count,
+                node.kind,
             ),
         )
         self._vec_cache[node.node_id] = (blob, list(node.embedding))
@@ -282,6 +285,37 @@ class MemoryStore:
                     self._touch_uncommitted(n.node_id)
         return hits
 
+    # ---------- 缺口发现（v0.9）----------
+
+    def record_gap(self, query: str) -> None:
+        """记录一条零命中查询（纯元数据，内容冻结无损）。
+
+        借鉴 Knowledge OS「检索即更新」的安全子集：系统只记录缺口并在
+        doctor 中提醒，补写什么、要不要补永远由用户决定。
+        """
+        q = query.strip()
+        if not q:
+            return
+        gaps = self.gap_queries()
+        if any(g.get("q") == q for g in gaps):
+            return
+        gaps.insert(0, {"q": q[:80], "t": time.time()})
+        with self.transaction():
+            self._set_meta(
+                "gap_queries", json.dumps(gaps[:GAP_LIMIT], ensure_ascii=False)
+            )
+
+    def gap_queries(self) -> List[Dict]:
+        """最近的零命中查询列表（新→旧，至多 GAP_LIMIT 条）。"""
+        raw = self._get_meta("gap_queries")
+        if not raw:
+            return []
+        try:
+            gaps = json.loads(raw)
+            return gaps if isinstance(gaps, list) else []
+        except (ValueError, TypeError):
+            return []
+
     # ---------- 统计 ----------
 
     def stats(self) -> Dict:
@@ -298,6 +332,14 @@ class MemoryStore:
         }
 
     # ---------- 内部 ----------
+
+    def _migrate_columns(self) -> None:
+        """旧库平滑加列（幂等）：v0.9 新增 nodes.kind（可选记忆类型标注）。"""
+        cols = [r[1] for r in self.conn.execute("PRAGMA table_info(nodes)")]
+        if "kind" not in cols:
+            self.conn.execute(
+                "ALTER TABLE nodes ADD COLUMN kind TEXT NOT NULL DEFAULT ''"
+            )
 
     def _decode_embedding(self, blob) -> List[float]:
         """兼容两种存储：v0.8 float32 BLOB（bytes）与 v0.7 JSON 文本（str）。"""
@@ -338,6 +380,7 @@ class MemoryStore:
             created_at=row[8],
             last_access=row[9],
             access_count=row[10],
+            kind=row[11] if len(row) > 11 else "",
         )
 
     def _set_meta(self, key: str, value: str) -> None:

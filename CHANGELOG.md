@@ -2,6 +2,56 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.9.0] - 2026-08-31
+
+借鉴版：对照三份外部研究（Knowledge OS 混合检索、Meta Proactive Memory
+Agent 选择性干预、Perplexity Portable Computer 上下文纪律 + airllm 按需
+加载）做的集中借鉴。全部改动只落在检索 / 注入 / 调度层——**不改写任何记忆
+内容**（内容冻结原则完整保持），核心依旧零依赖，差分线上格式不变
+（v0.8 与 v0.9 设备可互相同步）。
+
+### 检索质量
+
+- **三路混合检索 + RRF 融合**（新模块 `retrieval.py`）：向量（余弦 +
+  相对阈值）+ 关键词（n-gram 重叠，字面命中兜底）+ 图谱（SAN 一跳邻居）
+  三路召回，按排名做 RRF（k=60）融合——多路共识天然加分，无需归一化、
+  无新参数。CLI `search` / `context` 与 MCP `memory_search` 全部切换。
+  借鉴来源：Knowledge OS（Wiki-RAG + GraphRAG）的混合检索实践
+- **缺口发现**：零命中查询记入本地（纯元数据，至多 20 条），`doctor`
+  显示缺口并提示补写——系统只提醒，内容永远由用户写（内容冻结下的
+  安全自进化）。CLI / MCP 检索无命中时自动记录、去重
+
+### token 经济（极度省 token 原则的进一步落地）
+
+- **预算注入 + 超额截断**：Path A 注入块受预算约束（`serialize` 的
+  max_chars / MCP `memory_search` 新增 `budget` 参数），预算内全文注入，
+  第一个超预算条目注入**原文前缀**并标注截断——截断是取原文连续片段，
+  不改写任何字。对应 Metis「查询时只读约 56 token 而不重放 1410 token
+  历史」与 airllm「只载入当前这一步需要的层」
+- **沉默契约**：没有可注入的高置信记忆时，返回显式「本轮不干预」标注
+  而不是硬凑弱命中——沉默也是动作（借鉴 Meta Proactive Memory Agent）
+- **MCP 工具描述瘦身**：三个工具的描述各压缩到一行——工具描述常驻每个
+  客户端会话，是 v0.8「工具面 4→3」之后的第二步（借鉴 Perplexity
+  Portable Computer 的上下文纪律）
+
+### 记忆标注
+
+- **可选 `kind` 标注**：`add` / `memory_add` 支持 `kind=fact`（稳定事实）/
+  `procedure`（试过什么、结果怎样），纯可选不强制——借鉴 Proactive
+  Memory Agent 的记忆三分法（v0 取其二，私有进度类不进库）。旧库打开
+  自动平滑加列；差分序列化向后兼容（旧端 from_dict 自动忽略新字段）
+
+### 文档
+
+- README / README_EN 新增「领域收敛」章节：引用 Metis（arXiv 2607.26760）、
+  Proactive Memory Agent（arXiv 2607.08716）与 Perplexity Portable
+  Computer——外置记忆 + 内容冻结路线获得前沿研究的三重背书
+- RFC-001 §10 同步 v0.9 工具面与检索契约；路线图补「借鉴清单」（含明确
+  不借的：摘要改写、五层企业架构等违背原则的部分）
+
+测试：新增 `tests/test_retrieval.py` 8 项（混合检索、沉默契约、截断的
+内容冻结守卫、旧库迁移、跨版本兼容）；51 → 59 项
+
 ## [0.8.2] - 2026-08-31
 
 文档：论文预印本 Zenodo DOI 上架。

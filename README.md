@@ -25,10 +25,15 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.8）
+## 当前能力（v0.9）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
+| 三路混合检索 + RRF | 向量 + 关键词（字面命中兜底）+ SAN 图谱一跳三路召回，按排名做 RRF 融合（k=60）——多路共识天然加分，无新参数可调 | ✅ v0.9 |
+| 预算注入 + 沉默契约 | Path A 注入受 token 预算约束，超预算条目注入**原文前缀**（截断 ≠ 改写，内容冻结无损）；无高质量命中时明确返回「本轮不干预」，不硬凑弱命中 | ✅ v0.9 |
+| MCP 工具描述瘦身 | 三个工具的描述各压缩到一行——工具描述常驻每个客户端会话，省 token 从描述面开始 | ✅ v0.9 |
+| 缺口发现 | 零命中查询记入本地（纯元数据），`doctor` 显示缺口并提示——系统只提醒，内容永远由用户写 | ✅ v0.9 |
+| 可选 kind 标注 | `fact`（稳定事实）/ `procedure`（试过什么、结果怎样）可选标注，纯可选不强制 | ✅ v0.9 |
 | 增量建边 | 写入时只计算新节点与既有节点的关联（O(n)，不再每次全量 O(n²) 重算）；`membridge rebuild-edges` 提供全量重建出口 | ✅ v0.8 |
 | 工程健壮性 | SQLite WAL 并发 + 单事务原子提交（add+建边、差分应用）；差分包"数据错误跳过 / 环境错误保留重试"分流 | ✅ v0.8 |
 | token 经济 | MCP 工具收敛为 3 个（context 并入 search）、检索相对阈值滤除弱命中、超长记忆写入软引导拆分 | ✅ v0.8 |
@@ -58,6 +63,29 @@
 | 切换前**预加载**（零等待） | ✅ | ❌ 被动检索 | ❌ |
 | **内容冻结**（不重写记忆） | ✅ 架构级约束 | ❌ LLM 摘要改写 | 部分 |
 | 隐私分级（迁移标签 + 场景域） | ✅ | 部分 | ❌ |
+
+## 领域收敛：外置记忆路线正在被前沿研究背书
+
+记忆桥的三个差异化主张不是孤立的设计选择。2026 年的前沿工作正从三个独立方向
+收敛到同一条路线：
+
+- **Metis（记忆基础模型，arXiv 2607.26760）** 把历史压进模型内部参数，
+  但论文自己承认：固定容量必然遗忘、参数态**难以审计、难以精确删除、隐私
+  边界难保证**，并给出混合蓝图——低频、可审计、超长历史继续留在外部存储，
+  由外部系统负责容量、可解释检索与纠错。这正是记忆桥所在的生态位：
+  原生记忆是互补者，不是替代者。
+- **Proactive Memory Agent（Meta，arXiv 2607.08716）** 证明长程任务的
+  关键不是"存更多"，而是"哪条记忆应该在什么时候重新进入决策回路"——
+  其核心载体就是一个独立于模型的**外置结构化记忆库** + 守门策略，且消融显示
+  「把沉默当作动作」比全量暴露更稳。记忆桥 v0.9 的沉默契约与相对阈值
+  过滤与之同构。
+- **Perplexity Portable Computer**（本地 Agent，零 token 成本）的工程纪律
+  ——极小系统提示、极少核心工具、按需加载——验证了记忆桥「极度省 token」
+  原则的普适性；其"敏感内容不出设备 + 出口显式门控"与 PAMS 设计哲学一致。
+
+v0.9 即是一次对照这三份研究的集中借鉴（检索质量 / token 经济 / 缺口发现），
+全部只落在检索、注入与调度层——**不改写任何记忆内容**，详见
+[路线图「借鉴版」一节](docs/roadmap.md)。
 
 ## 平台覆盖（跨平台记忆共享）
 
@@ -95,9 +123,9 @@ python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 
 
 ```bash
 membridge init                                           # 一键接入本机检测到的 AI 平台
-membridge add "用户在开发记忆桥项目" --tags dev          # 写入记忆
-membridge search "记忆桥" -k 3                          # 语义检索
-membridge context "继续早上的讨论"                       # 输出 Path A 上下文块
+membridge add "用户在开发记忆桥项目" --tags dev          # 写入记忆（可选 --kind fact / procedure）
+membridge search "记忆桥" -k 3                          # 三路混合检索（向量 + 关键词 + 图谱，RRF 融合）
+membridge context "继续早上的讨论"                       # 输出 Path A 上下文块（无命中时明确"本轮不注入"）
 membridge preload 我的手机                               # 预加载候选（PAMS 门控）
 membridge delta phone.db --out delta.json               # 生成到另一设备的差分包
 membridge apply delta.json                              # 并入差分包
@@ -105,7 +133,7 @@ membridge publish --dir "D:\百度网盘同步盘\membridge" --passphrase 我的
 membridge fetch   --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 从网盘取回
 membridge stats                                         # 记忆库概况
 membridge rebuild-edges                                 # 全量重建语义关联边（常规 add 只增量建边）
-membridge doctor                                        # 环境自检（含库位置健康：临时目录/多库分裂告警）
+membridge doctor                                        # 环境自检（库位置健康 + 记忆缺口提醒）
 membridge autosync                                      # 自动同步（init 已注册计划任务，每 15 分钟自动运行）
 membridge show-passphrase                               # 配对新设备时查看同步口令（系统已替你生成并托管）
 membridge set-passphrase                                # 手动设置/修改同步口令（一般不需要）
@@ -146,9 +174,10 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 }
 ```
 
-可用工具：`memory_add`（Add）、`memory_search`（Search，`as_context=true` 直接返回
-Path A 注入块）、`memory_preload`（Preload）——严格限定在 UEP 权限边界内，
-没有"改写记忆"的工具。
+可用工具：`memory_add`（Add，可选 `kind` 标注）、`memory_search`（Search，
+三路混合检索；`as_context=true` 直接返回带预算的 Path A 注入块，无高质量
+命中时明确告知本轮不注入）、`memory_preload`（Preload）——严格限定在 UEP
+权限边界内，没有"改写记忆"的工具。
 
 ## 架构一览
 
@@ -227,6 +256,11 @@ pytest -q
 - [Tencent ncnn](https://github.com/tencent/ncnn)：v0.4 起借鉴其零依赖、自描述模型文件
   （param/bin）与便携免安装发布的工程实践，映射详见
   [docs/design-notes/ncnn-borrowings.md](docs/design-notes/ncnn-borrowings.md)。
+- Metis（arXiv 2607.26760）、Proactive Memory Agent（arXiv 2607.08716）与
+  Perplexity Portable Computer：v0.9 的检索融合、预算注入、沉默契约与工具
+  描述瘦身借鉴自这三份工作，逐项映射与"明确不借"清单见
+  [路线图「借鉴版」一节](docs/roadmap.md)；airllm 的"只载入当前需要的层"
+  启发了超额条目的原文前缀注入。
 
 ## License
 

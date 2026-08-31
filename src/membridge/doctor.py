@@ -79,6 +79,11 @@ def run_doctor(out=print) -> int:
             out("     （跨设备同步就绪；发布/取回命令见 membridge init 输出）")
         else:
             out("  ⚠️ 云盘通道: 未配置（跨设备功能未启用）——运行 membridge init 配置")
+        gaps = s.gap_queries()
+        if gaps:
+            sample = "、".join(f"「{g['q']}」" for g in gaps[:3])
+            out(f"  💡 记忆缺口: 最近 {len(gaps)} 类问题没查到记忆（如 {sample}）")
+            out("     （系统只提醒，是否补写由你决定：membridge add \"...\"）")
         s.close()
     else:
         out("  ⚠️ 尚未创建（运行 membridge init 即可）")

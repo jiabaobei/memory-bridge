@@ -18,9 +18,10 @@ from .embeddings import HashingEmbedder, OpenAIEmbedder, cosine, embedder_identi
 from .node import MemoryNode
 from .store import MemoryStore
 from .san import build_edges
+from .retrieval import hybrid_search
 from . import capabilities, clients, dss, heat, injection, privacy, sync_agent, transport, vault
 
-__version__ = "0.8.2"
+__version__ = "0.9.0"
 
 __all__ = [
     "MemoryNode",
@@ -30,6 +31,7 @@ __all__ = [
     "cosine",
     "embedder_identity",
     "build_edges",
+    "hybrid_search",
     "capabilities",
     "clients",
     "dss",

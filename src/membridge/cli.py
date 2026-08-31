@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import capabilities, dss, heat, injection, privacy, transport
+from . import capabilities, dss, heat, injection, privacy, retrieval, transport
 from .embeddings import HashingEmbedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
@@ -53,6 +53,7 @@ def cmd_add(args: argparse.Namespace) -> int:
         scene=args.scene or classify_scene(args.text),
         device=args.device or store.device_name,
         migration=args.migration or default_migration(args.text),
+        kind=(args.kind or "").strip(),
     )
     # v0.8：add + 增量建边单事务提交；只算新节点与既有节点的关联（O(n)）
     with store.transaction():
@@ -66,18 +67,19 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def cmd_search(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    hits = store.search(capabilities.best_embedder().embed(args.query), k=args.k)
+    hits = retrieval.hybrid_search(store, capabilities.best_embedder(), args.query, k=args.k)
     if not hits:
-        print("（暂无相关记忆）")
+        print("（暂无相关记忆——已记入缺口，membridge doctor 可查看）")
         return 0
     for i, (n, s) in enumerate(hits, 1):
-        print(f"[{i}]（相似度 {s:.2f}）{n.content}")
+        kind_tag = f"[{n.kind}] " if n.kind else ""
+        print(f"[{i}]（相关度 {s:.3f}）{kind_tag}{n.content}")
     return 0
 
 
 def cmd_context(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    hits = store.search(capabilities.best_embedder().embed(args.query), k=args.k)
+    hits = retrieval.hybrid_search(store, capabilities.best_embedder(), args.query, k=args.k)
     print(injection.serialize(n for n, _ in hits))
     return 0
 
@@ -347,6 +349,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--tags", default="", help="逗号分隔标签")
     p.add_argument("--scene", default=None, help="场景域（默认自动分类）")
     p.add_argument("--migration", default=None, help="迁移标签 local/edge/cloud（默认自动判定）")
+    p.add_argument("--kind", default="", choices=["", "fact", "procedure"],
+                   help="可选标注：fact 稳定事实 / procedure 试过什么、结果（默认不标注）")
     p.set_defaults(func=cmd_add)
 
     p = sub.add_parser("search", help="语义检索记忆")

@@ -23,6 +23,7 @@ from . import capabilities
 from .embeddings import Embedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
+from .retrieval import hybrid_search
 from .san import build_edges
 from .store import MemoryStore, default_db_path
 
@@ -76,12 +77,9 @@ def create_server(
     mcp = FastMCP("memory-bridge", **settings)
 
     @mcp.tool()
-    def memory_add(text: str, tags: str = "", migration: str = "") -> str:
-        """写入一条跨设备记忆（Add 阶段）。
-
-        建议一句话一条，避免长段落——条目越短，检索注入越省 token。
-        tags: 逗号分隔的标签；migration: 可选 local/edge/cloud（默认按内容自动判定）。
-        """
+    def memory_add(text: str, tags: str = "", migration: str = "",
+                   kind: str = "") -> str:
+        """写入一条跨设备记忆：一句话一条最省 token；tags 逗号分隔；migration 可选 local/edge/cloud（默认自动）；kind 可选 fact（事实）/procedure（试过什么、结果）。"""
         node = MemoryNode(
             content=text,
             embedding=embedder.embed(text),
@@ -89,6 +87,7 @@ def create_server(
             scene=classify_scene(text),
             device=store.device_name,
             migration=migration.strip() or default_migration(text),
+            kind=kind.strip() if kind.strip() in ("fact", "procedure") else "",
         )
         with store.transaction():
             store.add(node)
@@ -102,21 +101,18 @@ def create_server(
         return msg
 
     @mcp.tool()
-    def memory_search(query: str, k: int = 5, as_context: bool = False) -> str:
-        """按语义检索记忆（Search 阶段），返回最相关的 k 条（弱命中已按相对阈值过滤）。
-
-        as_context=true 时返回可注入系统提示的记忆上下文块
-        （Path A 显式注入，带时间 / 设备 / 场景标注）。
-        """
-        hits = store.search(embedder.embed(query), k=k)
+    def memory_search(query: str, k: int = 5, as_context: bool = False,
+                      budget: int = 0) -> str:
+        """检索记忆（向量+关键词+图谱三路混合，弱命中已过滤）；as_context=true 返回带预算的可注入记忆块，无高质量命中时明确告知本轮不注入。"""
+        hits = hybrid_search(store, embedder, query, k=k)
         if as_context:
             from .injection import serialize
 
-            return serialize(n for n, _ in hits)
+            return serialize((n for n, _ in hits), max_chars=budget or 1500)
         if not hits:
-            return "（暂无相关记忆）"
+            return "（暂无相关记忆——本轮不注入，保持沉默）"
         return "\n".join(
-            f"[{i + 1}]（相似度 {s:.2f}）{n.content}" for i, (n, s) in enumerate(hits)
+            f"[{i + 1}]（相关度 {s:.3f}）{n.content}" for i, (n, s) in enumerate(hits)
         )
 
     @mcp.tool()

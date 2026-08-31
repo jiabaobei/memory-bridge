@@ -31,10 +31,15 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Manual guides | ByteDance TRAE and UI-based MCP clients (init prints steps) | ✅ |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.8)
+## Status (v0.9)
 
 | Capability | Status |
 |---|---|
+| **Hybrid retrieval + RRF** — three recall routes (vector + keyword for exact-literal matches + one-hop SAN graph) fused by Reciprocal Rank Fusion (k=60): multi-route consensus wins, nothing to tune | ✅ v0.9 |
+| **Budgeted injection + silence contract** — Path A blocks obey a token budget; the first over-budget entry is injected as a **prefix of the original text** (truncation ≠ rewriting — content freezing intact); when nothing passes the quality bar the tool says so ("no intervention this turn") instead of padding weak hits | ✅ v0.9 |
+| **Slim MCP tool descriptions** — each of the 3 tool descriptions compressed to one line: descriptions live in every client session, so this is where token savings start | ✅ v0.9 |
+| **Gap discovery** — zero-hit queries are logged locally (pure metadata) and surfaced by `doctor`: the system only reminds; what gets written is always the user's call | ✅ v0.9 |
+| **Optional `kind` tagging** — `fact` (stable facts) / `procedure` (what was tried, what happened); strictly optional | ✅ v0.9 |
 | **Incremental edge building** — on write, only the new node is paired against existing nodes (O(n), no more full O(n²) recompute per add); `membridge rebuild-edges` is the explicit full-rebuild exit | ✅ v0.8 |
 | **Engineering robustness** — SQLite WAL concurrency + single atomic transaction (add + edge building, delta apply); delta packets split into "data error → skip" vs "environment error → kept for retry" | ✅ v0.8 |
 | **Token economy** — MCP tools consolidated to 3 (`memory_context` merged into `memory_search`), retrieval relative-threshold filters weak hits, oversized memories get a soft "one sentence per memory" hint on write | ✅ v0.8 |
@@ -52,6 +57,34 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Portable `membridge.exe` (ncnn-style per-platform binaries) | ✅ v0.4 |
 | AEE adaptive evolution (α / π_nav / θ_window) | 📋 Phase 4 (interfaces reserved) |
 | Path B hidden-state fusion | 🧪 Phase 4 experimental branch |
+
+## Field convergence: external memory is getting backed by frontier research
+
+MemoryBridge's three differentiators are not isolated design choices. In 2026,
+frontier work converged on the same route from three independent directions:
+
+- **Metis (Memory Foundation Model, arXiv 2607.26760)** compresses history into
+  in-model parameters, but the paper itself concedes: fixed capacity must forget,
+  and parametric state is **hard to audit, hard to delete precisely, and hard to
+  bound for privacy** — and proposes a hybrid blueprint where low-frequency,
+  auditable, long-horizon history stays in *external* storage, which provides
+  capacity, explainable retrieval, and error correction. That is exactly
+  MemoryBridge's niche: native memory is a complement, not a replacement.
+- **Proactive Memory Agent (Meta, arXiv 2607.08716)** shows that long-horizon
+  tasks fail not from missing information but from losing its grip on behavior;
+  the fix is a keeper policy over an **external structured memory store**, and
+  ablations show "silence as an action" beats always-exposing the store.
+  MemoryBridge v0.9's silence contract and relative-threshold filtering are
+  isomorphic to this.
+- **Perplexity Portable Computer** (local agent, zero token cost) validates the
+  "extreme token economy" principle — tiny system prompts, few core tools,
+  on-demand loading — and its "sensitive content never leaves the device +
+  explicit exit gating" matches the PAMS philosophy.
+
+v0.9 is a borrowing release aligned with these three works (retrieval quality /
+token economy / gap discovery), touching only the retrieval, injection, and
+scheduling layers — **never rewriting memory content**. Item-by-item mapping and
+the explicit not-borrowed list: [Roadmap, "Borrowing release"](docs/roadmap.md).
 
 ## Quick start
 
@@ -71,8 +104,10 @@ CLI:
 membridge init                                      # cloud channel (auto-picked) + passphrase
                                                     # (auto-generated & vaulted) + platform wiring
 membridge add "Working on the MemoryBridge project" --tags dev
-membridge search "MemoryBridge" -k 3
+                                                    # optional: --kind fact / procedure
+membridge search "MemoryBridge" -k 3              # hybrid: vector + keyword + graph, RRF-fused
 membridge context "continue this morning's discussion"
+                                                    # explicit "no injection this turn" on no hit
 membridge preload my-phone
 membridge autosync                                  # runs automatically every 15 min (scheduled task)
 membridge show-passphrase                           # reveal vaulted passphrase when pairing a device
@@ -83,7 +118,7 @@ membridge publish --dir "D:/netdisk-sync/membridge" --force   # rebuild a wiped 
 membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge stats
 membridge rebuild-edges                             # full rebuild of association edges (regular adds build incrementally)
-membridge doctor                                    # env self-check (incl. DB location health)
+membridge doctor                                    # env self-check (DB location health + memory gaps)
 ```
 
 The passphrase can also come from the `MEMBRIDGE_PASSPHRASE` environment variable.
@@ -111,7 +146,11 @@ MCP clients (Cursor `mcp.json`):
 }
 ```
 
-Tools exposed: `memory_add`, `memory_search` (`as_context=true` returns the Path A injection block directly), `memory_preload` — strictly limited to the UEP permission boundary; there is no "rewrite memory" tool.
+Tools exposed: `memory_add` (optional `kind` tag), `memory_search` (hybrid
+three-route retrieval; `as_context=true` returns a budgeted Path A injection
+block and explicitly reports "no intervention" when nothing passes the quality
+bar), `memory_preload` — strictly limited to the UEP permission boundary; there
+is no "rewrite memory" tool.
 
 ## Relationship to the paper
 

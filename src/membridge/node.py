@@ -23,6 +23,9 @@ class MemoryNode:
     device: str = "unknown"   # 记忆产生时所在设备
     migration: str = "edge"   # PAMS L1 迁移标签：local / edge / cloud
     confidence: float = 1.0
+    # v0.9 可选标注（借鉴 Proactive Memory Agent 的记忆三分法）：
+    # "fact" 稳定事实 / "procedure" 试过什么、结果怎样；空 = 未标注，纯可选不强制
+    kind: str = ""
     node_id: str = field(default_factory=lambda: uuid.uuid4().hex[:16])
     created_at: float = field(default_factory=time.time)
     last_access: float = field(default_factory=time.time)

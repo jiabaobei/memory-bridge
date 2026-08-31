@@ -10,6 +10,7 @@
 
 | 版本 | 日期 | 改版说明 |
 |---|---|---|
+| v0.9.0 | 2026-08-31 | 借鉴版：三路混合检索 + RRF 融合、预算注入 + 超额截断、沉默契约、MCP 工具描述瘦身、缺口发现、可选 kind 标注；README 增「领域收敛」章节（Metis / Proactive Memory Agent / Portable Computer 背书） |
 | v0.8.2 | 2026-08-31 | 文档：论文预印本 Zenodo DOI 链接与 bibtex doi 字段（中英对齐） |
 | v0.8.1 | 2026-08-30 | 实战修复：跨盘符差分导出被误判路径穿越（C 盘默认库 + D 盘正式库场景），改为逐基座独立判断 |
 | v0.8.0 | 2026-08-30 | 工程修订：增量建边 O(n²)→O(n)、embedding float32 BLOB + 旧库自动迁移、WAL + 单事务原子提交、MCP 工具面 4→3（token 经济）、doctor 库位置健康检查、修复测试劫持用户真实配置的两处隔离洞、内容冻结守卫测试 |
@@ -26,6 +27,44 @@
 | v0.2.0 | 2026-08-29 | 一键接入：init 自动配置主流 AI 平台（MCP / 技能 / 手动指南），新增 doctor 自检 |
 | v0.1.1 | 2026-08-29 | 修复 mcp 2.x 兼容（锁定 mcp>=1.2,<2），依赖缺失给可操作提示 |
 | v0.1.0 | 2026-08-29 | 首个公开版本：跨设备、跨平台 AI 共享记忆层（SAN + DSS + PAMS + Path A + MCP） |
+
+## 借鉴版 ✅（v0.9.0，2026-08-31）
+
+对照三份外部研究做的集中借鉴。三条产品原则的对照检查：**内容冻结**——
+全部改动只落在检索 / 注入 / 调度层，截断注入只取原文连续片段；**极度省
+token**——预算注入、沉默契约、工具描述瘦身全部指向 token 开销；**极度
+简化易上手**——无新命令（能力并入既有 search / context / doctor）、无新
+必填参数、核心保持零依赖。
+
+借鉴清单（来源 → 落位）：
+
+- [x] 三路混合检索 + RRF 融合（Knowledge OS：Wiki-RAG + GraphRAG 实践）
+      → 新模块 `retrieval.py`，CLI 与 MCP 检索全部切换
+- [x] 缺口发现（Knowledge OS「检索即更新」的安全子集：只记元数据、只提醒，
+      内容永远由用户写）→ `store.record_gap` + `doctor` 显示
+- [x] 预算注入 + 超额截断（Metis：查询时只读约 56 token 而不重放 1410；
+      airllm：只载入当前这一步需要的层）→ `injection.serialize` 预算填充，
+      超预算条目注入原文前缀（截断 ≠ 改写，内容冻结无损）
+- [x] 沉默契约（Meta Proactive Memory Agent：沉默也是动作）→ 无高置信命中
+      时显式返回「本轮不干预」，不硬凑弱命中
+- [x] 工具描述瘦身（Perplexity Portable Computer 的上下文纪律）→ MCP 三个
+      工具描述各压缩到一行，是 v0.8「工具面 4→3」之后的第二步
+- [x] 可选 `kind` 标注（Proactive Memory Agent 记忆三分法取其二：
+      fact / procedure；私有进度类不进库）→ `add --kind` / `memory_add(kind=)`，
+      纯可选不强制；旧库自动加列，差分序列化向后兼容
+
+明确不借的（违背三条原则）：
+
+- ❌ 摘要 / 改写式记忆处理（GraphRAG 社区摘要、Metis 参数态压缩写入）
+      ——违反内容冻结
+- ❌ 五层企业架构（Qdrant + PostgreSQL + Redis + MinIO + 编排框架）
+      ——违反单文件零依赖与极简哲学
+- ❌ 全量记忆常驻暴露（Proactive Memory Agent 消融证明全量暴露反而更差）
+      ——违反省 token
+
+README / README_EN 新增「领域收敛」章节，引用 Metis
+（arXiv 2607.26760）、Proactive Memory Agent（arXiv 2607.08716）与
+Perplexity Portable Computer 作为外置记忆路线的背书。测试 51 → 59 项。
 
 ## 工程修订 ✅（v0.8.0，2026-08-30）
 
