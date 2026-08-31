@@ -289,8 +289,9 @@ def cmd_gateway(args: argparse.Namespace) -> int:
     embedder = capabilities.best_embedder()
     token = resolve_token(store, token_arg=args.token,
                           env_token=os.environ.get("MEMBRIDGE_TOKEN"))
+    allow = [p.strip() for p in (args.allow or "").split(",") if p.strip()] or None
     server = create_gateway_server(store, embedder, token,
-                                   host=args.host, port=args.port)
+                                   host=args.host, port=args.port, allow=allow)
 
     lan_ip = args.host
     if args.host in ("0.0.0.0", "::"):
@@ -305,6 +306,8 @@ def cmd_gateway(args: argparse.Namespace) -> int:
     print(f"记忆桥网关已启动（设备 {store.device_name}）")
     print(f"  手机/平板访问：{scheme}://{lan_ip}:{args.port}")
     print(f"  访问口令：{token}")
+    if allow:
+        print(f"  IP 白名单：{', '.join(allow)}（其余来源一律 403，口令仍是第一道门）")
     print("  （浏览器打开即内置随身记页面；iOS 快捷指令 / 任意 HTTP 客户端")
     print("    调 /add、/search，鉴权头 Authorization: Bearer <口令>）")
     if not args.cert:
@@ -512,6 +515,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--port", type=int, default=8766)
     p.add_argument("--token", default=None,
                    help="访问口令（默认：环境变量 MEMBRIDGE_TOKEN，其次库内托管口令）")
+    p.add_argument("--allow", default=None,
+                   help="可选 IP 白名单：逗号分隔的 IP 或前缀（如 192.168.1.,100.64.）；"
+                        "不匹配的来源一律 403")
     p.add_argument("--cert", default=None, help="TLS 证书（跨网可达时启用，配合 --key）")
     p.add_argument("--key", default=None, help="TLS 私钥")
     p.set_defaults(func=cmd_gateway)

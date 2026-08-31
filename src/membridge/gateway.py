@@ -21,6 +21,7 @@ import hmac
 import json
 import secrets
 import ssl
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
@@ -84,6 +85,7 @@ _PAGE = """<!DOCTYPE html>
 <input id="query" placeholder="想找的记忆…">
 <button onclick="search()">找记忆</button>
 <pre id="out"></pre>
+<p class="hint" id="status"></p>
 <script>
 const tok = () => {
   let t = localStorage.getItem("membridge_token");
@@ -102,6 +104,20 @@ async function call(path, body) {
     document.getElementById("out").textContent = "口令不对，已清除，请重试"; return; }
   const d = await r.json();
   document.getElementById("out").textContent = d.message || JSON.stringify(d, null, 2);
+  status();
+}
+async function status() {
+  try {
+    const r = await fetch("/health",
+      { headers: { "Authorization": "Bearer " + tok() } });
+    if (r.status !== 200) return;
+    const d = await r.json();
+    const h = Math.floor(d.uptime_sec / 3600),
+          m = Math.floor((d.uptime_sec % 3600) / 60);
+    document.getElementById("status").textContent =
+      `基站「${d.device}」在线 ${h} 小时 ${m} 分 · 记忆 ${d.nodes} 条 · ` +
+      `已记 ${d.adds} 次 / 检索 ${d.searches} 次（命中 ${d.hits} 条）`;
+  } catch (e) {}
 }
 function add() {
   const t = document.getElementById("text").value.trim();
@@ -111,6 +127,7 @@ function search() {
   const q = document.getElementById("query").value.trim();
   if (q) call("/search", { query: q, as_context: true });
 }
+status();
 </script>
 </body>
 </html>
@@ -123,8 +140,15 @@ def create_gateway_server(
     token: str,
     host: str = "0.0.0.0",
     port: int = 8766,
+    allow: Optional[list] = None,
 ) -> ThreadingHTTPServer:
-    """构造带口令鉴权的网关 HTTP server（不启动；serve_forever 由调用方负责）。"""
+    """构造带口令鉴权的网关 HTTP server（不启动；serve_forever 由调用方负责）。
+
+    allow：可选 IP 白名单前缀列表（如 ["192.168.1.", "100.64."]）；
+    提供时客户端 IP 必须匹配其一（口令仍是第一道门，白名单是第二道）。
+    """
+    stats = {"started": time.time(), "requests": 0, "adds": 0,
+             "searches": 0, "hits": 0}
 
     def _authorized(handler) -> bool:
         auth = handler.headers.get("Authorization", "")
@@ -154,7 +178,14 @@ def create_gateway_server(
             self.wfile.write(body)
 
         def _check_auth(self) -> bool:
+            if allow and not any(
+                self.client_address[0].startswith(p) for p in allow
+            ):
+                self._send(403, {"error": "forbidden",
+                                 "message": "客户端 IP 不在白名单内"})
+                return False
             if _authorized(self):
+                stats["requests"] += 1
                 return True
             self._send(401, {"error": "unauthorized",
                              "message": "缺少访问口令或口令不正确"})
@@ -171,7 +202,12 @@ def create_gateway_server(
                 if not self._check_auth():
                     return
                 self._send(200, {"ok": True, "device": store.device_name,
-                                 "nodes": store.count_nodes()})
+                                 "nodes": store.count_nodes(),
+                                 "uptime_sec": int(time.time() - stats["started"]),
+                                 "requests": stats["requests"],
+                                 "adds": stats["adds"],
+                                 "searches": stats["searches"],
+                                 "hits": stats["hits"]})
                 return
             self._send(404, {"error": "not_found", "message": "未知路径"})
 
@@ -205,6 +241,7 @@ def create_gateway_server(
                 with store.transaction():
                     store.add(node)
                     build_edges(store, embedder, only_new=node)
+                stats["adds"] += 1
                 self._send(200, {"ok": True, "node_id": node.node_id,
                                  "message": f"已记忆（{node.node_id}）"})
                 return
@@ -215,6 +252,8 @@ def create_gateway_server(
                     return
                 k = int(data.get("k") or 5)
                 hits = hybrid_search(store, embedder, query, k=k)
+                stats["searches"] += 1
+                stats["hits"] += len(hits)
                 if data.get("as_context"):
                     from .injection import serialize
 

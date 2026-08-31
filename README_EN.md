@@ -32,11 +32,12 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.11)
+## Status (v0.12)
 
 | Capability | Status |
 |---|---|
-| **Phone / tablet access** — `membridge gateway` (base-station mode): one always-on home device runs a token-protected HTTP gateway; phones read/write that device's store without holding a full copy (they only ever need Add / Search / Preload). Built-in pocket-note web page; iOS Shortcuts and any HTTP client work out of the box; pure stdlib, zero new dependencies. Android full node (Termux) documented in the [mobile guide](docs/mobile.md) | ✅ v0.11 |
+| **Gateway observability + IP allowlist** — what a resident base-station service needs to debug: uptime / request count / adds / searches / hits reported live by `/health` and shown in the pocket-note page; `--allow` admits clients by IP/prefix — token first, allowlist second | ✅ v0.12 |
+| **Phone / tablet access** — `membridge gateway` (base-station mode): one always-on home device runs a token-protected HTTP gateway; phones read/write that device's store without holding a full copy (they only ever need Add / Search / Preload). Built-in pocket-note web page; iOS Shortcuts and any HTTP client work out of the box; pure stdlib, zero new dependencies. **A retired phone makes a fine 24/7 low-power base station (5–10 W)** and can pair with OlliteRT local models into a zero-cloud personal AI stack — see the [mobile guide](docs/mobile.md) | ✅ v0.11 |
 | **Markdown export view** — `membridge export` renders the whole store as human-readable Markdown (grouped by scene, sectioned by fact/procedure, with device/time provenance): **a read-only view that never writes back** — memories become auditable, git-friendly, portable | ✅ v0.10 |
 | **Resident recall hint** — `membridge recall-hint` prints a one-liner you may paste into CLAUDE.md / AGENTS.md: "recall before you answer" instead of "hope the agent remembers to search"; prints only, never edits host files | ✅ v0.10 |
 | **Hybrid retrieval + RRF** — three recall routes (vector + keyword for exact-literal matches + one-hop SAN graph) fused by Reciprocal Rank Fusion (k=60): multi-route consensus wins, nothing to tune | ✅ v0.9 |
@@ -117,6 +118,16 @@ and its cross-device story runs through its hosted cloud (MemoryBridge insists
 on self-held E2E-encrypted channels). v0.10 borrows its "memory as files"
 auditability (`membridge export`, a read-only view that never writes back) —
 see [Roadmap, "memU borrowing release"](docs/roadmap.md).
+
+A fifth data point comes from the **edge**: devices are becoming first-class AI
+infrastructure. Ornith-1.5's 9B quantized build (~1.5 GB) runs directly on
+phones; OlliteRT turns a retired Android phone into a 24/7 LAN model server.
+Once a phone can host both the model and the service, MemoryBridge's
+base-station mode supplies the missing piece — **memory**. One old phone
+running OlliteRT (local inference) plus `membridge gateway` (the memory
+substrate) is a fully self-held, zero-cloud personal AI stack (recipes in the
+[mobile guide](docs/mobile.md)). The boundary stays sharp: the local model
+lives on the host side; the memory core remains LLM-free.
 
 ## Quick start
 

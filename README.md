@@ -25,11 +25,12 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.11）
+## 当前能力（v0.12）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
-| 手机 / 平板接入 | `membridge gateway` 基站模式：家里一台常开设备跑网关，手机经口令保护的 HTTP 读写记忆库（内置随身记网页，可加主屏幕；iOS 快捷指令直连），纯标准库零新依赖；Android 完整节点（Termux）见 [移动端指南](docs/mobile.md) | ✅ v0.11 |
+| 网关可观测 + IP 白名单 | 基站常驻服务的排障刚需：运行时长 / 请求数 / 写入数 / 检索命中数实时可查（`/health` + 随身记页面）；`--allow` 按 IP/网段白名单放行，口令 + 白名单双保险 | ✅ v0.12 |
+| 手机 / 平板接入 | `membridge gateway` 基站模式：家里一台常开设备跑网关，手机经口令保护的 HTTP 读写记忆库（内置随身记网页，可加主屏幕；iOS 快捷指令直连），纯标准库零新依赖；**旧手机可当 24 小时低功耗基站**（5–10 瓦），还能与 OlliteRT 本地模型拼成零云端个人 AI 栈，见 [移动端指南](docs/mobile.md) | ✅ v0.11 |
 | Markdown 导出视图 | `membridge export` 把整座库渲染成人类可读的 Markdown（场景分组 + fact/procedure 分节 + 出处）——**只读视图，永不回写**，记忆可审计、可进 Git、可带走 | ✅ v0.10 |
 | 常驻召回提示 | `membridge recall-hint` 打印一行提示，自愿粘贴进 CLAUDE.md / AGENTS.md——「任务前主动召回」代替「被动等想起」；只打印不代写宿主文件 | ✅ v0.10 |
 | 三路混合检索 + RRF | 向量 + 关键词（字面命中兜底）+ SAN 图谱一跳三路召回，按排名做 RRF 融合（k=60）——多路共识天然加分，无新参数可调 | ✅ v0.9 |
@@ -104,6 +105,14 @@ memU 用 LLM 蒸馏**生成**记忆内容（记忆桥拒绝：内容冻结），
 的可审计性（`membridge export`，只读视图永不回写），见
 [路线图「memU 借鉴版」一节](docs/roadmap.md)。
 
+第五个数据点来自端侧：**边缘设备正在成为 AI 基础设施的一等公民**。
+Ornith-1.5 的 9B 量化版（约 1.5GB）已能在手机上直接运行；OlliteRT 把
+旧手机变成了 24 小时在线的局域网模型服务器。当手机同时装得下模型与
+服务，记忆桥的基站模式恰好补上这块拼图缺的「记忆」——一部旧手机跑
+OlliteRT（本地推理）+ `membridge gateway`（记忆底座），就是完全自持、
+零云端的个人 AI 栈（配方见 [移动端指南](docs/mobile.md)）。边界仍然
+清晰：本地模型在宿主侧，记忆层核心零 LLM。
+
 ## 平台覆盖（跨平台记忆共享）
 
 用户只需运行 **`membridge init`**：自动检测本机已安装的平台并接入（幂等安全，重复执行无副作用）。
@@ -150,7 +159,7 @@ membridge apply delta.json                              # 并入差分包
 membridge publish --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 发到网盘通道
 membridge fetch   --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 从网盘取回
 membridge stats                                         # 记忆库概况
-membridge gateway                                       # 手机/平板接入网关（基站模式，口令保护）
+membridge gateway                                       # 手机/平板接入网关（基站模式，口令保护；--allow 加 IP 白名单）
 membridge gateway-token                                 # 显示网关访问口令（配置手机时用）
 membridge export                                        # 导出人类可读的 Markdown 视图（--out 落盘）
 membridge recall-hint                                   # 打印常驻召回提示（自愿粘贴进 CLAUDE.md / AGENTS.md）
@@ -299,6 +308,11 @@ pytest -q
   的可审计性与常驻召回指令思路（分别落为 `export` 只读视图与
   `recall-hint`）；其「服务端零 LLM」架构与记忆桥同构。自动蒸馏管线与
   云托管不在借鉴之列，理由见 [路线图「memU 借鉴版」一节](docs/roadmap.md)。
+- [OlliteRT](https://github.com/NightMean/OlliteRT)（旧手机变局域网模型
+  服务器）：v0.12 借鉴其运行时状态页与「监听范围 + IP 白名单 + Bearer
+  口令」的安全默认项；「旧手机 24 小时基站」与两者组合的端侧全栈配方
+  见 [移动端指南](docs/mobile.md)。Ornith-1.5 9B 上手机的进展则印证了
+  端侧趋势（见「领域收敛」）。
 
 ## License
 

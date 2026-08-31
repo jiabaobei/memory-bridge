@@ -114,3 +114,45 @@ def test_resolve_token_autogenerates_and_persists():
     assert resolve_token(store, token_arg="手动指定") == "手动指定"
     assert resolve_token(store, env_token="环境变量") == "环境变量"
     store.close()
+
+
+def test_gateway_stats_reported_in_health():
+    """/health 报告运行时长与请求统计（v0.12 基站可观测性）。"""
+    server, store, port = _start_gateway()
+    _call(port, "/add", body={"text": COFFEE})
+    _call(port, "/search", body={"query": "咖啡", "k": 3})
+    code, d = _call(port, "/health")
+    assert code == 200
+    assert d["uptime_sec"] >= 0
+    assert d["requests"] == 3          # add + search + health 本次
+    assert d["adds"] == 1 and d["searches"] == 1
+    assert d["hits"] >= 1
+    server.shutdown()
+    store.close()
+
+
+def test_gateway_allowlist_blocks_non_matching_ip():
+    """IP 白名单：不匹配的来源一律 403（口令仍是第一道门）。"""
+    tmp = tempfile.TemporaryDirectory()
+    store = MemoryStore(os.path.join(tmp.name, "mem.db"), device="pc")
+    store._tmp = tmp
+    # 白名单只放行不存在的网段 → 本机请求被拒
+    server = create_gateway_server(store, HashingEmbedder(), TOKEN,
+                                   host="127.0.0.1", port=0,
+                                   allow=["192.0.2."])
+    port = server.server_address[1]
+    th = threading.Thread(target=server.serve_forever, daemon=True)
+    th.start()
+    code, d = _call(port, "/health")
+    assert code == 403 and d.get("error") == "forbidden"
+    server.shutdown()
+    # 白名单放行本机 → 正常
+    server2 = create_gateway_server(store, HashingEmbedder(), TOKEN,
+                                    host="127.0.0.1", port=0,
+                                    allow=["127.0.0.1"])
+    port2 = server2.server_address[1]
+    threading.Thread(target=server2.serve_forever, daemon=True).start()
+    code, d = _call(port2, "/health")
+    assert code == 200 and d["ok"]
+    server2.shutdown()
+    store.close()
