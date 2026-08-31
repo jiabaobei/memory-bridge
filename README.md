@@ -25,10 +25,11 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.12）
+## 当前能力（v0.13）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
+| 通道归一（多设备指向同一云盘通道） | 通道身份证 `channel.json`：首设备创建，后续设备 `init` / 同步时**自动认领**；分裂（本机与通道身份证不一致）显式告警，先到先得不改写；`membridge channel` 一屏体检（本机通道 / 身份证 / 通道内出现过的设备）；OneDrive 多根目录识别（`OneDrive - 个人` 等变体）；doctor 通道健康告警。**纯元数据：不含口令、不碰记忆内容** | ✅ v0.13 |
 | 网关可观测 + IP 白名单 | 基站常驻服务的排障刚需：运行时长 / 请求数 / 写入数 / 检索命中数实时可查（`/health` + 随身记页面）；`--allow` 按 IP/网段白名单放行，口令 + 白名单双保险 | ✅ v0.12 |
 | 手机 / 平板接入 | `membridge gateway` 基站模式：家里一台常开设备跑网关，手机经口令保护的 HTTP 读写记忆库（内置随身记网页，可加主屏幕；iOS 快捷指令直连），纯标准库零新依赖；**旧手机可当 24 小时低功耗基站**（5–10 瓦），还能与 OlliteRT 本地模型拼成零云端个人 AI 栈，见 [移动端指南](docs/mobile.md) | ✅ v0.11 |
 | Markdown 导出视图 | `membridge export` 把整座库渲染成人类可读的 Markdown（场景分组 + fact/procedure 分节 + 出处）——**只读视图，永不回写**，记忆可审计、可进 Git、可带走 | ✅ v0.10 |
@@ -159,12 +160,13 @@ membridge apply delta.json                              # 并入差分包
 membridge publish --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 发到网盘通道
 membridge fetch   --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 从网盘取回
 membridge stats                                         # 记忆库概况
+membridge channel                                       # 通道一致性体检：本机与其他设备是否指向同一云盘通道
 membridge gateway                                       # 手机/平板接入网关（基站模式，口令保护；--allow 加 IP 白名单）
 membridge gateway-token                                 # 显示网关访问口令（配置手机时用）
 membridge export                                        # 导出人类可读的 Markdown 视图（--out 落盘）
 membridge recall-hint                                   # 打印常驻召回提示（自愿粘贴进 CLAUDE.md / AGENTS.md）
 membridge rebuild-edges                                 # 全量重建语义关联边（常规 add 只增量建边）
-membridge doctor                                        # 环境自检（库位置健康 + 记忆缺口提醒）
+membridge doctor                                        # 环境自检（库位置健康 + 通道健康 + 记忆缺口提醒）
 membridge autosync                                      # 自动同步（init 已注册计划任务，每 15 分钟自动运行）
 membridge show-passphrase                               # 配对新设备时查看同步口令（系统已替你生成并托管）
 membridge set-passphrase                                # 手动设置/修改同步口令（一般不需要）
@@ -194,6 +196,28 @@ membridge publish --dir "..." --force    # 忽略本地记录，重发全量重�
 ```
 
 不加 `--force` 会输出「没有需要发布的新记忆。」，这是幂等表现，不是故障。
+
+#### 多台设备如何一致指向同一个通道（v0.13）
+
+核心思路：**通道的「身份」记在通道自己身上，而不是记在每台设备上**——
+认领代替记路径。你唯一要做的，是让各台设备的通道文件夹落在**同一个会被
+云盘同步的位置**（例如都用 `D:\OneDrive\membridge`，或都用坚果云的
+`我的坚果云\membridge`）。之后：
+
+- **首个设备**发布记忆时，会在通道目录写一份**通道身份证** `channel.json`
+  （通道 ID / 创建设备 / 创建时间 / 嵌入器指纹）——**纯元数据，不含口令、
+  不含任何记忆内容**；
+- **之后的每台设备**运行 `membridge init`（或第一次 `publish`/`fetch`/
+  `autosync`）时，检测到目录里已有身份证就**自动认领**同一通道，并输出
+  「已加入既有通道（由某设备创建）」——不需要你手动记路径、不需要复制配置；
+- 若某台设备被误配到**另一个**通道（本机记录的通道 ID 与身份证对不上），
+  `membridge channel` / `doctor` / `publish` / `fetch` / 自动同步都会**显式
+  告警**（先到先得不改写，避免两台设备互相覆盖身份证）；
+- 随时用 `membridge channel` 一屏体检：本机通道、通道身份证、通道里出现过
+  的其他设备。
+
+> 手机 / 平板不需要通道——它们经 `membridge gateway` 基站模式直连家里那台
+> 常开设备（见 [移动端指南](docs/mobile.md)），天然只指向那一个库。
 
 ### 手动接入 MCP 客户端（`membridge init` 已覆盖的平台可跳过）
 

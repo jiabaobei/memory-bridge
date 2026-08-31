@@ -110,6 +110,9 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
             out(f"⚠️ 拒绝来自 {src} 的差分包：嵌入器不一致（见 RFC §4）")
             continue
         out(f"已取回 {src} 的记忆：新增 {r['nodes_added']} 条")
+    if tr.channel_status == "mismatch":
+        out("⚠️ 通道身份不一致：本机通道 ID 与云盘身份证（channel.json）不符，"
+            "疑似与其他设备分裂到了不同通道——运行 membridge channel 查看")
     out(f"自动同步完成（发布 {published} 个差分包）")
     with store.transaction():
         store._set_meta(LAST_PUBLISH_KEY, str(time.time()))

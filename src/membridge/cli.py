@@ -198,6 +198,9 @@ def cmd_publish(args: argparse.Namespace) -> int:
             print("（若云盘侧差分包已丢失，可加 --force 重发全量）")
     else:
         print(f"差分包已写入通道：{path}")
+    if tr.channel_status == "mismatch":
+        print("⚠️ 通道身份不一致：本机记录的通道 ID 与云盘里的身份证不符"
+              "（疑似通道分裂，运行 membridge channel 查看详情）")
     return 0
 
 
@@ -219,6 +222,9 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         print(f"环境错误 {fn}（包已保留，下次 fetch 自动重试）：{reason}")
     if not result["applied"] and not result["skipped"] and not result.get("errors"):
         print("通道中暂无新差分包。")
+    if tr.channel_status == "mismatch":
+        print("⚠️ 通道身份不一致：本机记录的通道 ID 与云盘里的身份证不符"
+              "（疑似通道分裂，运行 membridge channel 查看详情）")
     return 0
 
 
@@ -239,6 +245,42 @@ def cmd_stats(args: argparse.Namespace) -> int:
     store = _open_store(args)
     for key, value in store.stats().items():
         print(f"{key}: {value}")
+    return 0
+
+
+def cmd_channel(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """通道一致性体检（v0.13）：本机通道 / 通道身份证 / 通道内设备是否同一个。"""
+    from . import channel
+
+    store = _open_store(args)
+    netdisk = store.netdisk
+    if not netdisk:
+        print("尚未配置云盘通道：请先运行 membridge init。")
+        return 2
+    print(f"本机通道: {netdisk}")
+    print(f"本机通道 ID: {store.channel_id or '（尚未认领，首次同步时自动认领）'}")
+    if not os.path.isdir(netdisk):
+        print("⚠️ 通道目录不存在（云盘未登录 / 未开启同步 / 路径已变更）——"
+              "跨设备同步当前不可用")
+        return 1
+    manifest = channel.read_manifest(netdisk)
+    if manifest:
+        print(f"通道身份证: {manifest['channel_id']}"
+              f"（由设备「{manifest.get('creator')}」创建于 {manifest.get('created')}）")
+        if store.channel_id and store.channel_id != manifest["channel_id"]:
+            print("⚠️ 本机通道 ID 与云盘里的身份证不一致——疑似通道分裂："
+                  "本设备与其他设备可能指向了不同的云盘/目录")
+        else:
+            print("✅ 通道身份一致：本机与其他设备指向同一个通道")
+    else:
+        print("通道身份证尚未创建（首次发布时自动创建；也可立即 membridge publish）")
+    others = channel.peers(netdisk, exclude=store.device_name)
+    print(f"通道里出现过的其他设备: {'、'.join(others)}" if others
+          else "通道里还没见过其他设备的差分包")
+    warning = channel.channel_warning(store)
+    if warning:
+        print(f"⚠️ 历史分裂告警（{warning.get('seen')}）："
+              f"本机 {warning.get('local')} vs 通道 {warning.get('remote')}")
     return 0
 
 
@@ -491,6 +533,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("stats", help="记忆库统计")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("channel",
+                       help="通道一致性体检：本机与其他设备是否指向同一个云盘通道（v0.13）")
+    p.set_defaults(func=cmd_channel)
 
     p = sub.add_parser("export", help="导出人类可读的 Markdown 视图（只读，不回写）")
     p.add_argument("--out", default=None, help="输出 .md 文件路径（默认打印到屏幕）")

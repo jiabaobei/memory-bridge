@@ -56,11 +56,27 @@ def _home() -> Path:
 
 
 def detect_sync_roots() -> List[Tuple[str, Path]]:
-    """识别本机已安装的同步盘及其本地同步根目录。"""
+    """识别本机已安装的同步盘及其本地同步根目录。
+
+    v0.13：OneDrive 匹配家目录下所有 `OneDrive*` 根（OneDrive - 个人 /
+    OneDrive - 公司 等）——同一个云盘在不同设备上的本地根目录名常常
+    不同，但只要是同一账号同步下来的，就是同一个通道宿主。
+    """
     found: List[Tuple[str, Path]] = []
+    home = _home()
     for name, patterns in SYNC_DRIVE_CANDIDATES:
+        if name == "OneDrive":
+            try:
+                hits = sorted(
+                    p for p in home.iterdir()
+                    if p.is_dir() and p.name.lower().startswith("onedrive")
+                )
+            except OSError:
+                hits = []
+            found.extend((name, p) for p in hits)
+            continue
         for pat in patterns:
-            p = Path(pat.replace("~", str(_home()), 1)) if pat.startswith("~") else Path(pat)
+            p = Path(pat.replace("~", str(home), 1)) if pat.startswith("~") else Path(pat)
             if p.is_dir():
                 found.append((name, p))
                 break
@@ -127,6 +143,19 @@ def run_init(opts: InitOptions, out=print) -> int:
         FolderTransport(netdisk, store)
         store.set_netdisk(netdisk)
         out(f"\n☁️ 云盘通道已配置（必做项完成）：{netdisk}")
+
+        # 通道身份（v0.13）：通道文件夹里已有 channel.json（其他设备先到）
+        # → 认领同一通道；否则由本设备创建，其他设备以后自动认领。
+        # 这一句保证多台设备一致指向同一个网盘通道，不再靠用户记路径。
+        from . import channel as _channel
+
+        manifest, status = _channel.ensure_channel_identity(netdisk, store)
+        if status == "adopted" and manifest:
+            out(f"   🔗 已加入既有通道「{manifest['channel_id']}」"
+                f"（由设备「{manifest.get('creator')}」创建于 {manifest.get('created')}）")
+        elif status == "created":
+            out(f"   🔗 已创建通道「{store.channel_id}」——"
+                "其他设备运行 membridge init 检测到这个文件夹时会自动认领")
 
         # 同步口令由系统自动生成并托管进本机保险库——用户无需设置、无需记住。
         # 配对新设备时用 membridge show-passphrase 查看（AI 替用户记住）。

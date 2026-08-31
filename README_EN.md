@@ -32,10 +32,11 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.12)
+## Status (v0.13)
 
 | Capability | Status |
 |---|---|
+| **Channel convergence (all devices point at the same cloud channel)** — a channel ID card `channel.json`: the first device creates it, every later device **auto-adopts** it at `init` / sync time; a split (local ID ≠ the ID card in the channel) warns loudly — first come, first served, the card is never rewritten; `membridge channel` shows the whole picture in one screen (local channel / ID card / devices seen in the channel); OneDrive multi-root detection (`OneDrive - Personal`-style variants); doctor channel-health warnings. **Pure metadata: no passphrase, never touches memory content** | ✅ v0.13 |
 | **Gateway observability + IP allowlist** — what a resident base-station service needs to debug: uptime / request count / adds / searches / hits reported live by `/health` and shown in the pocket-note page; `--allow` admits clients by IP/prefix — token first, allowlist second | ✅ v0.12 |
 | **Phone / tablet access** — `membridge gateway` (base-station mode): one always-on home device runs a token-protected HTTP gateway; phones read/write that device's store without holding a full copy (they only ever need Add / Search / Preload). Built-in pocket-note web page; iOS Shortcuts and any HTTP client work out of the box; pure stdlib, zero new dependencies. **A retired phone makes a fine 24/7 low-power base station (5–10 W)** and can pair with OlliteRT local models into a zero-cloud personal AI stack — see the [mobile guide](docs/mobile.md) | ✅ v0.11 |
 | **Markdown export view** — `membridge export` renders the whole store as human-readable Markdown (grouped by scene, sectioned by fact/procedure, with device/time provenance): **a read-only view that never writes back** — memories become auditable, git-friendly, portable | ✅ v0.10 |
@@ -160,12 +161,13 @@ membridge publish --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge publish --dir "D:/netdisk-sync/membridge" --force   # rebuild a wiped channel
 membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge stats
+membridge channel                               # channel-convergence check: same cloud channel on all devices?
 membridge gateway                               # phone/tablet gateway (base-station mode, token-protected)
 membridge gateway-token                         # show the gateway access token (when configuring a phone)
 membridge export                                # human-readable Markdown view (--out writes to disk)
 membridge recall-hint                           # print the resident recall one-liner (paste it yourself)
 membridge rebuild-edges                             # full rebuild of association edges (regular adds build incrementally)
-membridge doctor                                    # env self-check (DB location health + memory gaps)
+membridge doctor                                    # env self-check (DB location + channel health + memory gaps)
 ```
 
 The passphrase can also come from the `MEMBRIDGE_PASSPHRASE` environment variable.
@@ -188,6 +190,30 @@ failure empties the channel), the local record still says "published", so a plai
 ```bash
 membridge publish --dir "..." --force
 ```
+
+**How multiple devices converge on the same channel (v0.13).** The channel's
+identity lives **in the channel itself, not on each device** — adoption replaces
+path-bookkeeping. All you do is point every device's channel folder at the **same
+cloud-synced location** (e.g. `OneDrive/membridge` on all of them). Then:
+
+- The **first device** writes a **channel ID card** `channel.json` into the
+  channel directory on its first publish (channel ID / creator / creation time /
+  embedder fingerprint) — **pure metadata: no passphrase, never any memory
+  content**;
+- **Every later device** detects the card at `membridge init` (or its first
+  `publish`/`fetch`/`autosync`) and **auto-adopts** the same channel, printing
+  "joined an existing channel (created by …)" — no path to remember, no config
+  to copy;
+- If a device is misconfigured to a *different* channel (its recorded channel ID
+  disagrees with the card), `membridge channel` / `doctor` / `publish` / `fetch`
+  / auto-sync all **warn loudly** (first come, first served — the card is never
+  rewritten, so two devices can't clobber each other);
+- `membridge channel` is the one-screen health check: local channel, the ID
+  card, and every device seen in the channel.
+
+> Phones / tablets don't need a channel at all — they join through the
+> `membridge gateway` base-station mode ([mobile guide](docs/mobile.md)) and
+> inherently point at that one store.
 
 MCP clients (Cursor `mcp.json`):
 

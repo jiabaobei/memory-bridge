@@ -77,6 +77,21 @@ def run_doctor(out=print) -> int:
         if s.netdisk:
             out(f"  ☁️ 云盘通道: {s.netdisk}")
             out("     （跨设备同步就绪；发布/取回命令见 membridge init 输出）")
+            # 通道健康（v0.13）：目录还在吗？本机与其他设备是否同一通道？
+            if not os.path.isdir(s.netdisk):
+                warnings.append(
+                    "云盘通道目录不存在（云盘未登录 / 未开启同步 / 路径已变更）"
+                    "——跨设备同步当前不可用，重新登录云盘或 membridge init 重配"
+                )
+            else:
+                from . import channel as _channel
+
+                m = _channel.read_manifest(s.netdisk)
+                if m and s.channel_id and m["channel_id"] != s.channel_id:
+                    warnings.append(
+                        "通道身份不一致：本机通道 ID 与云盘通道里的身份证（channel.json）"
+                        "不符——疑似与其他设备分裂到了不同通道，运行 membridge channel 查看"
+                    )
         else:
             out("  ⚠️ 云盘通道: 未配置（跨设备功能未启用）——运行 membridge init 配置")
         gaps = s.gap_queries()

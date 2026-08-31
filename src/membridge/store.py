@@ -158,6 +158,15 @@ class MemoryStore:
         with self.transaction():
             self._set_meta("netdisk_dir", path)
 
+    @property
+    def channel_id(self) -> Optional[str]:
+        """本机认领的通道身份（v0.13；未认领时为 None）。"""
+        return self._get_meta("channel_id")
+
+    def set_channel_id(self, channel_id: str) -> None:
+        with self.transaction():
+            self._set_meta("channel_id", channel_id)
+
     # ---------- 节点（SAN 的 N） ----------
 
     def add(self, node: MemoryNode) -> MemoryNode:

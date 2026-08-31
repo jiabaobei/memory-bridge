@@ -27,6 +27,7 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from . import channel
 from .dss import Delta, EPSILON, apply_delta, delta_unsent, fingerprint
 from .node import MemoryNode
 from .privacy import preload_allowed
@@ -71,6 +72,7 @@ class FolderTransport:
     def __init__(self, root: str, store: MemoryStore) -> None:
         self.root = root
         self.store = store
+        self.channel_status = ""  # v0.13 通道身份核对结果（created/adopted/matched/mismatch）
         os.makedirs(os.path.join(root, OUTBOX), exist_ok=True)
         os.makedirs(os.path.join(root, ARCHIVE), exist_ok=True)
 
@@ -148,6 +150,8 @@ class FolderTransport:
         os.replace(tmp_path, final_path)  # 先写临时文件再改名，避免网盘读到半包
 
         self._remember_published(n for n in delta.nodes)
+        # 通道身份（v0.13）：首次发布即在通道里落「身份证」，后续设备认领
+        _, self.channel_status = channel.ensure_channel_identity(self.root, self.store)
         return final_path
 
     # ---------- 接收 ----------
@@ -172,6 +176,8 @@ class FolderTransport:
         applied: List = []
         skipped: List = []
         errors: List = []
+        # 通道身份（v0.13）：认领既有通道清单；不一致记告警，由 doctor / channel 呈现
+        _, self.channel_status = channel.ensure_channel_identity(self.root, self.store)
         my_name = self.store.device_name
         outbox = os.path.join(self.root, OUTBOX)
         store_fps = {fingerprint(n.content) for n in self.store.all_nodes()}
