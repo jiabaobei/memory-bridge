@@ -150,6 +150,7 @@ membridge init                                      # cloud channel (auto-picked
 membridge add "Working on the MemoryBridge project" --tags dev
                                                     # optional: --kind fact / procedure
 membridge search "MemoryBridge" -k 3              # hybrid: vector + keyword + graph, RRF-fused
+                                                    # (--scope tag:dev to go straight to a known range)
 membridge context "continue this morning's discussion"
                                                     # explicit "no injection this turn" on no hit
 membridge preload my-phone
@@ -230,7 +231,8 @@ MCP clients (Cursor `mcp.json`):
 ```
 
 Tools exposed: `memory_add` (optional `kind` tag), `memory_search` (hybrid
-three-route retrieval; `as_context=true` returns a budgeted Path A injection
+three-route retrieval; optional `scope` for direct access to a known range,
+e.g. `tag:dev`; `as_context=true` returns a budgeted Path A injection
 block and explicitly reports "no intervention" when nothing passes the quality
 bar), `memory_preload` — strictly limited to the UEP permission boundary; there
 is no "rewrite memory" tool.

@@ -102,9 +102,9 @@ def create_server(
 
     @mcp.tool()
     def memory_search(query: str, k: int = 5, as_context: bool = False,
-                      budget: int = 0) -> str:
-        """检索记忆（向量+关键词+图谱三路混合，弱命中已过滤）；as_context=true 返回带预算的可注入记忆块，无高质量命中时明确告知本轮不注入。"""
-        hits = hybrid_search(store, embedder, query, k=k)
+                      budget: int = 0, scope: str = "") -> str:
+        """检索记忆（三路混合，弱命中已过滤）；已知记忆在哪可用 scope 直达（如 tag:dev / kind:procedure）；as_context=true 返回带预算可注入块，无高质量命中明确告知不注入。"""
+        hits = hybrid_search(store, embedder, query, k=k, scope=scope)
         if as_context:
             from .injection import serialize
 

@@ -166,7 +166,7 @@ v0 决策（按约定采用启发式，接口签名对齐论文）：
 | 工具 | 论文阶段 | 说明 |
 |---|---|---|
 | `memory_add` | Add（写） | 自动场景分类 + 迁移标签判定；增量建边；超 200 字软引导拆分（v0.8）；可选 `kind` 标注 fact/procedure（v0.9） |
-| `memory_search` | Search（读） | 三路混合检索（向量 + 关键词 + SAN 一跳图）+ RRF 融合（v0.9）；命中计入热度；相对阈值滤弱命中；`as_context=true` 返回**带预算**的 Path A 上下文块，无高质量命中时显式返回「本轮不干预」（沉默契约，v0.9）；v0.8 并入原 `memory_context` |
+| `memory_search` | Search（读） | 三路混合检索（向量 + 关键词 + SAN 一跳图）+ RRF 融合（v0.9）；命中计入热度；相对阈值滤弱命中；`as_context=true` 返回**带预算**的 Path A 上下文块，无高质量命中时显式返回「本轮不干预」（沉默契约，v0.9）；可选 `scope` 范围直达 `tag:/scene:/kind:`（已知目标先过滤再融合，v0.13.1）；v0.8 并入原 `memory_context` |
 | `memory_preload` | Preload | 热度候选（PAMS 门控后） |
 
 > v0.8 工具面收敛：原 `memory_context` 并入 `memory_search(as_context=true)`，

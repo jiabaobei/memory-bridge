@@ -67,9 +67,13 @@ def cmd_add(args: argparse.Namespace) -> int:
 
 def cmd_search(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    hits = retrieval.hybrid_search(store, capabilities.best_embedder(), args.query, k=args.k)
+    hits = retrieval.hybrid_search(store, capabilities.best_embedder(), args.query,
+                                   k=args.k, scope=getattr(args, "scope", ""))
     if not hits:
-        print("（暂无相关记忆——已记入缺口，membridge doctor 可查看）")
+        if getattr(args, "scope", ""):
+            print("（该范围内暂无相关记忆）")
+        else:
+            print("（暂无相关记忆——已记入缺口，membridge doctor 可查看）")
         return 0
     for i, (n, s) in enumerate(hits, 1):
         kind_tag = f"[{n.kind}] " if n.kind else ""
@@ -79,7 +83,8 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 def cmd_context(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    hits = retrieval.hybrid_search(store, capabilities.best_embedder(), args.query, k=args.k)
+    hits = retrieval.hybrid_search(store, capabilities.best_embedder(), args.query,
+                                   k=args.k, scope=getattr(args, "scope", ""))
     print(injection.serialize(n for n, _ in hits))
     return 0
 
@@ -493,11 +498,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("search", help="语义检索记忆")
     p.add_argument("query")
     p.add_argument("-k", type=int, default=5)
+    p.add_argument("--scope", default="",
+                   help="可选范围直达：已知记忆在哪时先过滤再检索"
+                        "（如 tag:dev / scene:work / kind:procedure）")
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("context", help="输出 Path A 记忆上下文块")
     p.add_argument("query")
     p.add_argument("-k", type=int, default=5)
+    p.add_argument("--scope", default="",
+                   help="可选范围直达：同 search --scope")
     p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("preload", help="列出可预加载到目标设备的记忆")

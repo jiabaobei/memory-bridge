@@ -152,7 +152,7 @@ python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 
 ```bash
 membridge init                                           # 一键接入本机检测到的 AI 平台
 membridge add "用户在开发记忆桥项目" --tags dev          # 写入记忆（可选 --kind fact / procedure）
-membridge search "记忆桥" -k 3                          # 三路混合检索（向量 + 关键词 + 图谱，RRF 融合）
+membridge search "记忆桥" -k 3                          # 三路混合检索（向量 + 关键词 + 图谱，RRF 融合；--scope tag:dev 范围直达）
 membridge context "继续早上的讨论"                       # 输出 Path A 上下文块（无命中时明确"本轮不注入"）
 membridge preload 我的手机                               # 预加载候选（PAMS 门控）
 membridge delta phone.db --out delta.json               # 生成到另一设备的差分包
@@ -242,7 +242,8 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 ```
 
 可用工具：`memory_add`（Add，可选 `kind` 标注）、`memory_search`（Search，
-三路混合检索；`as_context=true` 直接返回带预算的 Path A 注入块，无高质量
+三路混合检索；已知记忆在哪可用 `scope` 范围直达，如 `tag:dev`；
+`as_context=true` 直接返回带预算的 Path A 注入块，无高质量
 命中时明确告知本轮不注入）、`memory_preload`（Preload）——严格限定在 UEP
 权限边界内，没有"改写记忆"的工具。
 
@@ -337,6 +338,11 @@ pytest -q
   口令」的安全默认项；「旧手机 24 小时基站」与两者组合的端侧全栈配方
   见 [移动端指南](docs/mobile.md)。Ornith-1.5 9B 上手机的进展则印证了
   端侧趋势（见「领域收敛」）。
+- [Context7](https://github.com/upstash/context7)（最新文档直接注入
+  prompt）：其三大机制（生成时注入 / 预算控制 / 常驻提醒）与记忆桥
+  v0.9/v0.10 同构，是路线的外部背书；v0.13.1 仅借鉴其「已知目标直达」
+  洞察（检索 `scope` 范围直达）。云端托管索引、爬取入库、多包生态不在
+  借鉴之列，理由见 [路线图「Context7 借鉴版」一节](docs/roadmap.md)。
 
 ## License
 

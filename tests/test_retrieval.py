@@ -147,3 +147,51 @@ def test_delta_serialization_still_compatible():
     # 旧版设备收到带 kind 的包：from_dict 只取自己认识的字段
     restored = MemoryNode.from_dict(d)
     assert restored.kind == "fact" and restored.content == COFFEE
+
+
+# ---------- v0.13.1 范围直达（借鉴 Context7「已知目标直达」）----------
+
+def _seed_scoped(store, emb):
+    store.add(MemoryNode(content=COFFEE, embedding=emb.embed(COFFEE),
+                         device="phone", tags=["生活"], kind="fact"))
+    store.add(MemoryNode(content=DEPLOY_FAIL, embedding=emb.embed(DEPLOY_FAIL),
+                         device="phone", tags=["dev"], kind="procedure"))
+    store.add(MemoryNode(content=MEETING, embedding=emb.embed(MEETING),
+                         device="phone", tags=["dev"], kind="fact"))
+
+
+def test_scope_tag_filters_candidates():
+    """scope=tag:dev 只召回该标签下的记忆（已知范围直达，跳过无关候选）。"""
+    store = _tmp_store()
+    emb = HashingEmbedder()
+    _seed_scoped(store, emb)
+    hits = retrieval.hybrid_search(store, emb, "咖啡 部署 会议", k=5, scope="tag:dev")
+    contents = {n.content for n, _ in hits}
+    assert COFFEE not in contents           # 「生活」标签被滤掉
+    assert contents and contents <= {DEPLOY_FAIL, MEETING}
+    store.close()
+
+
+def test_scope_kind_and_scene_and_unknown():
+    """kind/scene 过滤生效；未知字段不过滤（行为与无参数完全一致）。"""
+    store = _tmp_store()
+    emb = HashingEmbedder()
+    _seed_scoped(store, emb)
+    proc = retrieval.hybrid_search(store, emb, "部署 段错误", k=5, scope="kind:procedure")
+    assert proc and all(n.kind == "procedure" for n, _ in proc)
+
+    base = retrieval.hybrid_search(store, emb, "咖啡", k=5)
+    same = retrieval.hybrid_search(store, emb, "咖啡", k=5, scope="nonsense:xx")
+    assert {n.content for n, _ in base} == {n.content for n, _ in same}
+    store.close()
+
+
+def test_scope_miss_is_expected_not_a_gap():
+    """指定范围后无命中是预期（范围内没有），不记缺口——避免噪声提醒。"""
+    store = _tmp_store()
+    emb = HashingEmbedder()
+    _seed_scoped(store, emb)
+    hits = retrieval.hybrid_search(store, emb, "咖啡", k=5, scope="tag:dev")
+    assert hits == []
+    assert store.gap_queries() == []
+    store.close()

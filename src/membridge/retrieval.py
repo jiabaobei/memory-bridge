@@ -26,6 +26,29 @@ GRAPH_SEEDS = 2     # 取前两路各前 2 名作为图扩展种子
 GRAPH_FANOUT = 3    # 每个种子最多扩展的 SAN 邻居数
 
 
+def scope_allowed(scope: str):
+    """解析范围直达参数（v0.13.1，借鉴 Context7「已知目标直达」）。
+
+    调用方已知道记忆在哪个范围时，先按范围过滤再融合——跳过无关候选，
+    更准、更省。支持 `tag:<名>` / `scene:<名>` / `kind:<fact|procedure>`。
+    空串或无法解析（未知字段、缺值）返回 None = 不过滤，行为与之前完全一致。
+    只读过滤元数据，不触碰记忆内容。
+    """
+    if not scope or ":" not in scope:
+        return None
+    field, _, value = scope.partition(":")
+    field, value = field.strip().lower(), value.strip()
+    if not value:
+        return None
+    if field in ("tag", "tags"):
+        return lambda n: value in n.tags
+    if field == "scene":
+        return lambda n: n.scene == value
+    if field == "kind":
+        return lambda n: n.kind == value
+    return None
+
+
 def keyword_recall(store: MemoryStore, query: str) -> List[Tuple[MemoryNode, float]]:
     """关键词路：字符 n-gram 集合重叠度（复用 SAN 的 n-gram 基建，零依赖）。
 
@@ -69,13 +92,19 @@ def hybrid_search(
     query: str,
     k: int = 5,
     record_access: bool = True,
+    scope: str = "",
 ) -> List[Tuple[MemoryNode, float]]:
     """三路混合检索 + RRF 融合，返回 (node, rrf_score) 降序。
 
     三路：向量（余弦，含相对阈值滤弱命中）+ 关键词（n-gram 重叠）+
     图谱（种子一跳邻居）。融合得分 = Σ 1/(排名 + RRF_K)，只看排名，
     多路共识天然加分。全路无命中时记录一条缺口（纯元数据）后返回空列表。
+
+    scope（v0.13.1，可选）：范围直达，形如 `tag:dev` / `scene:work` /
+    `kind:procedure`——调用方已知记忆所在范围时先过滤再融合，更准更省。
+    指定了范围而无命中属预期（该范围内没有），不记缺口。
     """
+    allowed = scope_allowed(scope)
     vec_hits = store.search(
         embedder.embed(query), k=k * 2, record_access=False, rel_floor=0.5
     )
@@ -84,6 +113,8 @@ def hybrid_search(
         n for n, _ in kw_hits[:GRAPH_SEEDS]
     ]
     routes = [vec_hits, kw_hits, graph_recall(store, seeds)]
+    if allowed is not None:
+        routes = [[(n, s) for n, s in r if allowed(n)] for r in routes]
 
     scores: dict = {}
     nodes: dict = {}
@@ -95,7 +126,8 @@ def hybrid_search(
     hits = [(nodes[nid], s) for nid, s in fused if nodes.get(nid) is not None]
 
     if not hits:
-        store.record_gap(query)
+        if allowed is None:  # 无范围限定才算"缺口"；范围内没有是预期
+            store.record_gap(query)
         return []
     if record_access:
         with store.transaction():
