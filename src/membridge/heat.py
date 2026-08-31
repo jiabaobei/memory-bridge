@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from .node import MemoryNode
 from .store import MemoryStore
@@ -46,3 +46,62 @@ def preload_candidates(
     if hot_only:
         ranked = [n for n in ranked if heat(n) >= THETA_HOT]
     return ranked[:k]
+
+
+def clusters(store: MemoryStore) -> Dict[str, int]:
+    """连通分量聚类：把 SAN 切成记忆簇（v0.14，借鉴代码图谱的社区划分思路）。
+
+    零依赖并查集实现，只为"整簇预加载"服务——切换设备时把当前任务所在
+    的整簇记忆一次带过去，而不是零散按热度取 k 条。
+    纯读图结构（只取边对），不触碰任何记忆内容。
+    """
+    parent: Dict[str, str] = {}
+
+    def find(x: str) -> str:
+        parent.setdefault(x, x)
+        root = x
+        while parent[root] != root:
+            root = parent[root]
+        while parent[x] != root:  # 路径压缩
+            parent[x], x = root, parent[x]
+        return root
+
+    for n in store.all_nodes():
+        find(n.node_id)
+    for src, dst in store.all_edge_pairs():
+        rs, rd = find(src), find(dst)
+        if rs != rd:
+            parent[rs] = rd
+
+    remap: Dict[str, int] = {}
+    out: Dict[str, int] = {}
+    for nid in list(parent):
+        root = find(nid)
+        if root not in remap:
+            remap[root] = len(remap)
+        out[nid] = remap[root]
+    return out
+
+
+def preload_cluster(
+    store: MemoryStore,
+    allowed: Callable[[MemoryNode], bool],
+    k: int = PRELOAD_BUDGET,
+) -> List[MemoryNode]:
+    """整簇预加载：取"当前最热节点所在的记忆簇"，按热度排序返回至多 k 条。
+
+    与 preload_candidates（全局热度 Top-K）互补：全局热度给"最近常用的
+    零散记忆"，整簇给"当前这条任务线上的完整上下文"——对应论文预加载
+    主张的"切换即连续"：到新设备，整条任务线的记忆都已就位。
+    """
+    groups = clusters(store)
+    nodes = [n for n in store.all_nodes() if allowed(n)]
+    if not nodes:
+        return []
+    hottest = max(nodes, key=heat)
+    cid = groups.get(hottest.node_id)
+    if cid is None:  # 无边 → 该节点自成一簇
+        return [hottest][:k]
+    same = [n for n in nodes if groups.get(n.node_id) == cid]
+    same.sort(key=heat, reverse=True)
+    return same[:k]

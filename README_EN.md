@@ -32,10 +32,14 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.13)
+## Status (v0.14)
 
 | Capability | Status |
 |---|---|
+| **Typed edges + evidence** — every edge carries a `kind` (semantic / cooccur / entity) plus a tiny `evidence` note, so every link answers "why are these two related?"; existing stores migrate on open (old edges labeled semantic) — structure only, content untouched | ✅ v0.14 |
+| **Entity-anchor edges** — zero-dependency regex extraction of code symbols / file paths / repos / tags as deterministic anchors; memories sharing an anchor get linked — no reliance on literal coincidence, works across mixed Chinese-English phrasing | ✅ v0.14 |
+| **Cluster preload** — `preload --cluster`: union-find splits memory into clusters and preloads the whole cluster around the hottest node — on a new device, the entire task-line context is already in place | ✅ v0.14 |
+| **Recall-reason annotation** — `context` marks each line with a tiny hit path (vector / keyword / graph) so users can judge at a glance whether to trust a memory; `hybrid_search` stays a compatible thin wrapper | ✅ v0.14 |
 | **Channel convergence (all devices point at the same cloud channel)** — a channel ID card `channel.json`: the first device creates it, every later device **auto-adopts** it at `init` / sync time; a split (local ID ≠ the ID card in the channel) warns loudly — first come, first served, the card is never rewritten; `membridge channel` shows the whole picture in one screen (local channel / ID card / devices seen in the channel); OneDrive multi-root detection (`OneDrive - Personal`-style variants); doctor channel-health warnings. **Pure metadata: no passphrase, never touches memory content** | ✅ v0.13 |
 | **Gateway observability + IP allowlist** — what a resident base-station service needs to debug: uptime / request count / adds / searches / hits reported live by `/health` and shown in the pocket-note page; `--allow` admits clients by IP/prefix — token first, allowlist second | ✅ v0.12 |
 | **Phone / tablet access** — `membridge gateway` (base-station mode): one always-on home device runs a token-protected HTTP gateway; phones read/write that device's store without holding a full copy (they only ever need Add / Search / Preload). Built-in pocket-note web page; iOS Shortcuts and any HTTP client work out of the box; pure stdlib, zero new dependencies. **A retired phone makes a fine 24/7 low-power base station (5–10 W)** and can pair with OlliteRT local models into a zero-cloud personal AI stack — see the [mobile guide](docs/mobile.md) | ✅ v0.11 |

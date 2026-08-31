@@ -61,9 +61,11 @@ CREATE TABLE IF NOT EXISTS nodes (
     access_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS edges (
-    src    TEXT NOT NULL,
-    dst    TEXT NOT NULL,
-    weight REAL NOT NULL,
+    src      TEXT NOT NULL,
+    dst      TEXT NOT NULL,
+    weight   REAL NOT NULL,
+    kind     TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (src, dst)
 );
 CREATE TABLE IF NOT EXISTS meta (
@@ -219,9 +221,18 @@ class MemoryStore:
 
     # ---------- 边（SAN 的 E 与 W） ----------
 
-    def add_edge(self, src: str, dst: str, weight: float) -> None:
+    def add_edge(self, src: str, dst: str, weight: float,
+                 kind: str = "", evidence: str = "") -> None:
+        """写入一条带类型的边。
+
+        kind     semantic（语义/共现混合）| cooccur（字面共现主导）
+                 | entity（共享确定性实体锚点）
+        evidence 极短依据串（如 `cos=0.72` / `ent:memory-bridge`），
+                 只在需要解释"为什么相关"时读取，不进检索上下文（省 token）。
+        """
         self.conn.execute(
-            "INSERT OR REPLACE INTO edges VALUES (?,?,?)", (src, dst, weight)
+            "INSERT OR REPLACE INTO edges VALUES (?,?,?,?,?)",
+            (src, dst, weight, kind, evidence),
         )
         self._commit_if_autonomous()
 
@@ -237,6 +248,29 @@ class MemoryStore:
 
     def count_edges(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+
+    def neighbor_ids(self, node_id: str) -> List[Tuple[str, float]]:
+        """只取邻居 id 与权重（不解码节点）——聚类/图游走场景省 IO。"""
+        rows = self.conn.execute(
+            "SELECT dst, weight FROM edges WHERE src = ? "
+            "UNION ALL SELECT src, weight FROM edges WHERE dst = ?",
+            (node_id, node_id),
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def all_edge_pairs(self) -> List[Tuple[str, str]]:
+        """只取 (src, dst) 对——连通分量聚类用，避免解码 weight 与节点。"""
+        rows = self.conn.execute("SELECT src, dst FROM edges").fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def edge_kinds(self) -> Dict[str, int]:
+        """边类型分布（stats 展示用）。"""
+        out: Dict[str, int] = {}
+        for kind, cnt in self.conn.execute(
+            "SELECT kind, COUNT(*) FROM edges GROUP BY kind"
+        ):
+            out[kind or "unlabeled"] = cnt
+        return out
 
     def neighbors(self, node_id: str) -> List[Tuple[MemoryNode, float]]:
         """SAN 邻居查询原语 N1(n)（论文 §3.7.4 动作空间的基础）。"""
@@ -339,17 +373,34 @@ class MemoryStore:
             "nodes": self.count_nodes(),
             "edges": self.count_edges(),
             "by_migration": by_migration,
+            "edge_kinds": self.edge_kinds(),
             "netdisk": self.netdisk or "未配置（跨设备未启用）",
         }
 
     # ---------- 内部 ----------
 
     def _migrate_columns(self) -> None:
-        """旧库平滑加列（幂等）：v0.9 新增 nodes.kind（可选记忆类型标注）。"""
+        """旧库平滑加列（幂等）。
+
+        v0.9 新增 nodes.kind（可选记忆类型标注）；
+        v0.14 新增 edges.kind / edges.evidence（类型化边 + 证据）。
+        存量边统一标记为 semantic——它们确实由 λ·PMI+(1-λ)·cos 算得，
+        标注只是把既有事实显式化，不改任何权重、不碰记忆内容。
+        """
         cols = [r[1] for r in self.conn.execute("PRAGMA table_info(nodes)")]
         if "kind" not in cols:
             self.conn.execute(
                 "ALTER TABLE nodes ADD COLUMN kind TEXT NOT NULL DEFAULT ''"
+            )
+        ecols = [r[1] for r in self.conn.execute("PRAGMA table_info(edges)")]
+        if "kind" not in ecols:
+            self.conn.execute(
+                "ALTER TABLE edges ADD COLUMN kind TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.execute("UPDATE edges SET kind='semantic' WHERE kind=''")
+        if "evidence" not in ecols:
+            self.conn.execute(
+                "ALTER TABLE edges ADD COLUMN evidence TEXT NOT NULL DEFAULT ''"
             )
 
     def _decode_embedding(self, blob) -> List[float]:

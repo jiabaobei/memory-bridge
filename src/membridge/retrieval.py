@@ -86,19 +86,23 @@ def graph_recall(
     return scored
 
 
-def hybrid_search(
+def search_with_reasons(
     store: MemoryStore,
     embedder: Embedder,
     query: str,
     k: int = 5,
     record_access: bool = True,
     scope: str = "",
-) -> List[Tuple[MemoryNode, float]]:
-    """三路混合检索 + RRF 融合，返回 (node, rrf_score) 降序。
+) -> List[Tuple[MemoryNode, float, str]]:
+    """三路混合检索 + RRF 融合，返回 (node, rrf_score, reason)。
 
     三路：向量（余弦，含相对阈值滤弱命中）+ 关键词（n-gram 重叠）+
     图谱（种子一跳邻居）。融合得分 = Σ 1/(排名 + RRF_K)，只看排名，
     多路共识天然加分。全路无命中时记录一条缺口（纯元数据）后返回空列表。
+
+    reason 为极短的命中路径串（如"向量+图谱"），用于注入上下文时标注
+    "为什么召回这条"——用户一眼判断该不该信（v0.14）。理由只由检索路径
+    产生，不触碰记忆内容；字符串刻意压缩到几个字，服从省 token 原则。
 
     scope（v0.13.1，可选）：范围直达，形如 `tag:dev` / `scene:work` /
     `kind:procedure`——调用方已知记忆所在范围时先过滤再融合，更准更省。
@@ -112,18 +116,28 @@ def hybrid_search(
     seeds = [n for n, _ in vec_hits[:GRAPH_SEEDS]] + [
         n for n, _ in kw_hits[:GRAPH_SEEDS]
     ]
-    routes = [vec_hits, kw_hits, graph_recall(store, seeds)]
+    named = [("向量", vec_hits), ("关键词", kw_hits),
+             ("图谱", graph_recall(store, seeds))]
     if allowed is not None:
-        routes = [[(n, s) for n, s in r if allowed(n)] for r in routes]
+        named = [(name, [(n, s) for n, s in hits if allowed(n)])
+                 for name, hits in named]
 
     scores: dict = {}
     nodes: dict = {}
-    for route in routes:
+    why: dict = {}
+    for name, route in named:
         for rank, (n, _) in enumerate(route):
             scores[n.node_id] = scores.get(n.node_id, 0.0) + 1.0 / (rank + RRF_K)
             nodes[n.node_id] = n
+            seen = why.setdefault(n.node_id, [])
+            if name not in seen:
+                seen.append(name)
     fused = sorted(scores.items(), key=lambda t: t[1], reverse=True)[:k]
-    hits = [(nodes[nid], s) for nid, s in fused if nodes.get(nid) is not None]
+    hits = [
+        (nodes[nid], s, "+".join(why.get(nid, [])))
+        for nid, s in fused
+        if nodes.get(nid) is not None
+    ]
 
     if not hits:
         if allowed is None:  # 无范围限定才算"缺口"；范围内没有是预期
@@ -131,6 +145,23 @@ def hybrid_search(
         return []
     if record_access:
         with store.transaction():
-            for n, _ in hits:
+            for n, _, _ in hits:
                 store._touch_uncommitted(n.node_id)
     return hits
+
+
+def hybrid_search(
+    store: MemoryStore,
+    embedder: Embedder,
+    query: str,
+    k: int = 5,
+    record_access: bool = True,
+    scope: str = "",
+) -> List[Tuple[MemoryNode, float]]:
+    """不带理由的兼容封装：返回 (node, rrf_score)，行为与 v0.13 一致。"""
+    return [
+        (n, s)
+        for n, s, _ in search_with_reasons(
+            store, embedder, query, k=k, record_access=record_access, scope=scope
+        )
+    ]

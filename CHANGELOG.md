@@ -2,6 +2,39 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.14.0] - 2026-08-31
+
+GitNexus 借鉴版（图谱结构强化）：对照 GitNexus（abhigyanpatwari/GitNexus，
+零服务器代码知识图谱引擎）做的克制借鉴——吸收其「确定性关系源」思路为
+实体锚点；其图数据库（KuzuDB/LadybugDB）、Tree-sitter 全量 AST、PDG/
+污点分析、提交后重索引等重件一律不借（与三原则相悖）。事前核对发现：
+记忆桥 v0.9 已实现三路混合检索 + RRF + SAN 一跳扩展（GraphRAG Local
+Search 极简版），差距不在「有没有图谱」而在「边从哪来、可不可信」。
+
+### 新增
+
+- **类型化边 + 证据**：`edges` 表新增 `kind`（semantic / cooccur / entity）
+  与 `evidence` 两列，每条边可回答「为什么相关」；存量库打开自动迁移，
+  旧边统一标记 semantic（只加结构，不改权重）
+- **确定性实体锚点**：`san.extract_entities` 零依赖正则抽取代码符号 /
+  文件路径 / owner-repo / 全大写代号 + 用户标签；`build_entity_edges`
+  让共享同一锚点的记忆连 entity 边（每节点至多 5 条，保持图稀疏）
+- **整簇预加载**：`preload --cluster` 用并查集连通分量把记忆切簇，
+  按「当前最热节点所在簇」整簇返回——对应预加载主张的「切换即连续」
+- **召回理由标注**：`retrieval.search_with_reasons` 返回命中路径
+  （向量 / 关键词 / 图谱），`context` 注入时追加极短标注，一眼判断
+  该不该信；`hybrid_search` 变为兼容薄封装，既有调用零改动
+
+### 原则守护（本次未越线）
+
+- **极度省 token**：召回理由每行 ≤8 字符；evidence 不进检索上下文，
+  仅按需读取；建边类型收敛为 3 种，不为 temporal/device/scene 建边
+  （避免边数爆炸，device/scene 仍走节点元数据 + scope 过滤）
+- **极度简洁**：零新依赖、零新文件（实体抽取并入 san.py、聚类并入
+  heat.py）；唯一新 CLI 开关是 `preload --cluster`
+- **内容冻结**：全部改动只加结构/元数据，绝不改写任何记忆内容；
+  不引入图数据库、不解析 AST、不做提交后重索引
+
 ## [0.13.2] - 2026-08-31
 
 MoNe 背书版（纯文档，代码零改动）：对照高通 MoNe（Modular Neural Memory，

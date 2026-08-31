@@ -18,7 +18,7 @@ v0.9 借鉴修订（极度省 token 原则的进一步落地）：
 from __future__ import annotations
 
 import time
-from typing import Iterable, List
+from typing import Dict, Iterable, List, Optional
 
 from .node import MemoryNode
 
@@ -30,17 +30,26 @@ SILENCE_NOTE = "（记忆桥：本轮没有需要干预的记忆——保持沉�
 _TRUNC_MARK = "…[原文截断]"
 
 
-def _fmt_line(n: MemoryNode, content: str) -> str:
+def _fmt_line(n: MemoryNode, content: str, reason: str = "") -> str:
     ts = time.strftime("%m-%d %H:%M", time.localtime(n.created_at))
-    return f"- {content}（{ts}，来自 {n.device}，场景 {n.scene}）"
+    why = f"；{reason}" if reason else ""
+    return f"- {content}（{ts}，来自 {n.device}，场景 {n.scene}{why}）"
 
 
-def serialize(nodes: Iterable[MemoryNode], max_chars: int = 1500) -> str:
+def serialize(
+    nodes: Iterable[MemoryNode],
+    max_chars: int = 1500,
+    reasons: Optional[Dict[str, str]] = None,
+) -> str:
     """把高置信记忆节点序列化为自然语言上下文块（显式可审计）。
 
     max_chars 为注入预算：预算内的条目全文注入；第一个超预算的条目注入
     原文前缀并标注截断（截断 ≠ 改写，内容冻结原则完整保持）；再往后
     的条目放弃。无任何高置信条目时返回 SILENCE_NOTE。
+
+    reasons（v0.14，可选）：{node_id: "向量+图谱"} 极短命中路径映射，
+    追加在条目出处之后——让用户一眼判断"这条为什么被召回、该不该信"。
+    不传则不加标注（调用方可按需选择更省 token 的输出）。
     """
     eligible = [n for n in nodes if n.confidence >= CONFIDENCE_THRESHOLD]
     if not eligible:
@@ -48,17 +57,18 @@ def serialize(nodes: Iterable[MemoryNode], max_chars: int = 1500) -> str:
     lines: List[str] = ["[记忆桥 · 跨设备记忆上下文 开始]"]
     used = 0
     for n in eligible:
-        line = _fmt_line(n, n.content)
+        reason = (reasons or {}).get(n.node_id, "")
+        line = _fmt_line(n, n.content, reason)
         if used + len(line) <= max_chars:
             lines.append(line)
             used += len(line)
             continue
         # 预算不足：注入原文前缀（剩余预算扣除标注与出处开销后全给正文）
-        overhead = len(_fmt_line(n, "")) + len(_TRUNC_MARK)
+        overhead = len(_fmt_line(n, "", reason)) + len(_TRUNC_MARK)
         keep = max_chars - used - overhead
         if keep < 10:
             break
-        lines.append(_fmt_line(n, n.content[:keep] + _TRUNC_MARK))
+        lines.append(_fmt_line(n, n.content[:keep] + _TRUNC_MARK, reason))
         break
     lines.append("[记忆桥 · 跨设备记忆上下文 结束]")
     return "\n".join(lines)
@@ -66,8 +76,8 @@ def serialize(nodes: Iterable[MemoryNode], max_chars: int = 1500) -> str:
 
 def build_prompt_aug(
     system: str, memory_nodes: Iterable[MemoryNode], query: str,
-    max_chars: int = 1500,
+    max_chars: int = 1500, reasons: Optional[Dict[str, str]] = None,
 ) -> str:
     """生成增强后的完整 prompt（System ⊕ 记忆块 ⊕ 当前问题）。"""
-    block = serialize(memory_nodes, max_chars=max_chars)
+    block = serialize(memory_nodes, max_chars=max_chars, reasons=reasons)
     return f"{system}\n\n{block}\n\n[当前问题] {query}"

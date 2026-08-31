@@ -16,11 +16,101 @@ v0.8 工程修订：建边从「每次 add 全量 O(n²) 重算」改为增量�
 
 from __future__ import annotations
 
-from typing import Callable, Iterator, List, Optional, Tuple
+import re
+from typing import Callable, Iterator, List, Optional, Set, Tuple
 
 from .embeddings import Embedder, cosine
 from .node import MemoryNode
 from .store import MemoryStore
+
+# ---- v0.14 确定性实体锚点（正则，零依赖）----
+# 借鉴代码知识图谱的"确定性关系源"思路，但只抽取、不解析：
+# 不引入 Tree-sitter、不建 AST，仅用正则抽出原文中确凿存在的符号，
+# 作为记忆之间的确定性关联锚点（中英混写/同义改写也能连上）。
+_PATH_RE = re.compile(
+    r"[\w\-./]+\.(?:py|js|ts|tsx|jsx|go|java|rs|md|json|ya?ml|toml|sh|sql"
+    r"|html|css|c|cpp|cs|rb|php)\b",
+    re.IGNORECASE,
+)
+_FUNC_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]{2,})\s*\(")
+_CODE_RE = re.compile(r"\b([A-Z][A-Z0-9_]{2,})\b")
+_REPO_RE = re.compile(r"\b([A-Za-z0-9_.\-]+)/([A-Za-z0-9_.\-]{2,})\b")
+
+# 过泛的锚点不建边（否则图会退化成"万物相连"，违背稀疏原则与省 token）
+_ENTITY_MIN_LEN = 3
+
+
+def extract_entities(text: str) -> Set[str]:
+    """从原文抽取确定性锚点：文件路径 / 函数名 / 全大写代号 / owner-repo。
+
+    纯只读抽取，不生成任何新语义、不回写内容（内容冻结完整保持）。
+    抽取结果只用于建 entity 边——回答"这两条记忆凭什么相关"。
+    """
+    out: Set[str] = set()
+    for m in _PATH_RE.finditer(text):
+        out.add(m.group(0).lower())
+    for m in _FUNC_RE.finditer(text):
+        out.add(m.group(1).lower())
+    for m in _CODE_RE.finditer(text):
+        out.add(m.group(1))
+    for m in _REPO_RE.finditer(text):
+        whole = m.group(0)
+        tail = whole.rsplit("/", 1)[-1]
+        if "." in tail:  # 带扩展名的是文件路径，已由 _PATH_RE 覆盖
+            continue
+        out.add(whole.lower())
+    return {e for e in out if len(e) >= _ENTITY_MIN_LEN}
+
+
+def _node_entities(n: MemoryNode) -> Set[str]:
+    """节点锚点集合 = 原文抽取出的符号 ∪ 用户显式打的标签。"""
+    ents = extract_entities(n.content)
+    ents |= {"tag:" + t.strip().lower() for t in n.tags if t.strip()}
+    return ents
+
+
+def _ordered(a: str, b: str) -> Tuple[str, str]:
+    """边方向归一（小 id 在前）：避免 (a,b) 与 (b,a) 重复成两条边。"""
+    return (a, b) if a <= b else (b, a)
+
+
+def build_entity_edges(
+    store: MemoryStore,
+    node: MemoryNode,
+    max_edges: int = 5,
+    base_weight: float = 0.85,
+) -> List[Tuple[str, str, float]]:
+    """共享确定性锚点的记忆之间建 entity 边（v0.14）。
+
+    与 semantic 边互补：semantic 依赖统计代理（字符共现/向量相似），
+    entity 依赖原文中确凿存在的同一符号——不靠字面巧合。
+
+    每节点最多 max_edges 条（按共享锚点数降序），保持图稀疏、
+    省存储也省 token；内容冻结：只读原文与标签，不改任何记忆内容。
+    """
+    ents = _node_entities(node)
+    if not ents:
+        return []
+    scored: List[Tuple[int, str, List[str]]] = []
+    for other in store.all_nodes():
+        if other.node_id == node.node_id:
+            continue
+        shared = ents & _node_entities(other)
+        if not shared:
+            continue
+        scored.append((len(shared), other.node_id, sorted(shared)[:2]))
+    scored.sort(reverse=True)
+
+    added: List[Tuple[str, str, float]] = []
+    for nshared, other_id, sample in scored[:max_edges]:
+        src, dst = _ordered(node.node_id, other_id)
+        weight = round(min(0.95, base_weight + 0.05 * (nshared - 1)), 4)
+        evidence = "ent:" + ",".join(sample)
+        if store.edge_weight(src, dst) == weight:
+            continue  # 幂等：同权重不重写
+        store.add_edge(src, dst, weight, kind="entity", evidence=evidence)
+        added.append((src, dst, weight))
+    return added
 
 
 def _gram_set(text: str, ngram: int = 2) -> set:
@@ -73,14 +163,20 @@ def build_edges(
         )
     added: List[Tuple[str, str, float]] = []
     for a, b in pairs:
-        w = lam * pmi_fn(a.content, b.content) + (1.0 - lam) * cosine(
-            a.embedding, b.embedding
-        )
+        pmi = pmi_fn(a.content, b.content)
+        cos = cosine(a.embedding, b.embedding)
+        w = lam * pmi + (1.0 - lam) * cos
         if w < min_weight:
             continue
         weight = round(w, 4)
-        if store.edge_weight(a.node_id, b.node_id) == weight:
+        src, dst = _ordered(a.node_id, b.node_id)
+        if store.edge_weight(src, dst) == weight:
             continue  # 已存在且权重未变：不重写（幂等，写放大归零）
-        store.add_edge(a.node_id, b.node_id, weight)
-        added.append((a.node_id, b.node_id, weight))
+        # 共现主导（字面重叠高但语义向量不相似）单独标注，
+        # 与语义主导区分开——"为什么相关"可解释（v0.14 类型化边）
+        kind = "cooccur" if pmi > cos else "semantic"
+        store.add_edge(
+            src, dst, weight, kind=kind, evidence=f"pmi={pmi:.2f},cos={cos:.2f}"
+        )
+        added.append((src, dst, weight))
     return added

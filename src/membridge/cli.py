@@ -25,7 +25,7 @@ from . import capabilities, dss, heat, injection, privacy, retrieval, transport
 from .embeddings import HashingEmbedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
-from .san import build_edges
+from .san import build_edges, build_entity_edges
 from .store import MemoryStore, default_db_path
 
 
@@ -61,7 +61,11 @@ def cmd_add(args: argparse.Namespace) -> int:
             store._set_meta("embedder_id", json.dumps(embedder_identity(embedder), ensure_ascii=False))
         store.add(node)
         new_edges = build_edges(store, embedder, only_new=node)
-    print(f"已记忆 {node.node_id}（场景 {node.scene}，迁移 {node.migration}，新增关联边 {len(new_edges)} 条）")
+        # v0.14：确定性锚点边（共享同一代码符号/文件路径/仓库/标签即连边）
+        ent_edges = build_entity_edges(store, node)
+    extra = f"，其中锚点边 {len(ent_edges)} 条" if ent_edges else ""
+    print(f"已记忆 {node.node_id}（场景 {node.scene}，迁移 {node.migration}，"
+          f"新增关联边 {len(new_edges)} 条{extra}）")
     return 0
 
 
@@ -83,19 +87,28 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 def cmd_context(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    hits = retrieval.hybrid_search(store, capabilities.best_embedder(), args.query,
-                                   k=args.k, scope=getattr(args, "scope", ""))
-    print(injection.serialize(n for n, _ in hits))
+    hits = retrieval.search_with_reasons(
+        store, capabilities.best_embedder(), args.query,
+        k=args.k, scope=getattr(args, "scope", ""),
+    )
+    # v0.14：注入时标注极短召回理由，便于判断该不该信这条记忆
+    reasons = {n.node_id: why for n, _, why in hits}
+    print(injection.serialize((n for n, _, _ in hits), reasons=reasons))
     return 0
 
 
 def cmd_preload(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    cands = heat.preload_candidates(store, allowed=preload_allowed, k=args.k)
+    if getattr(args, "cluster", False):
+        cands = heat.preload_cluster(store, allowed=preload_allowed, k=args.k)
+        mode = "整簇"
+    else:
+        cands = heat.preload_candidates(store, allowed=preload_allowed, k=args.k)
+        mode = "热度"
     if not cands:
         print("（当前无可预加载的记忆）")
         return 0
-    print(f"将向设备「{args.target}」预加载 {len(cands)} 条（PAMS 门控已通过）：")
+    print(f"将向设备「{args.target}」预加载 {len(cands)} 条（{mode}，PAMS 门控已通过）：")
     for n in cands:
         print(f"- {n.content}（热度 {heat.heat(n):.2f}，迁移 {n.migration}）")
     return 0
@@ -513,6 +526,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("preload", help="列出可预加载到目标设备的记忆")
     p.add_argument("target", help="目标设备名")
     p.add_argument("-k", type=int, default=heat.PRELOAD_BUDGET)
+    p.add_argument("--cluster", action="store_true",
+                   help="整簇预加载：取当前最热节点所在的记忆簇（v0.14）")
     p.set_defaults(func=cmd_preload)
 
     p = sub.add_parser("delta", help="生成本库 → 另一设备的 DSS 差异包")
