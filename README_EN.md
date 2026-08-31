@@ -31,10 +31,12 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Manual guides | ByteDance TRAE and UI-based MCP clients (init prints steps) | ✅ |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.9)
+## Status (v0.10)
 
 | Capability | Status |
 |---|---|
+| **Markdown export view** — `membridge export` renders the whole store as human-readable Markdown (grouped by scene, sectioned by fact/procedure, with device/time provenance): **a read-only view that never writes back** — memories become auditable, git-friendly, portable | ✅ v0.10 |
+| **Resident recall hint** — `membridge recall-hint` prints a one-liner you may paste into CLAUDE.md / AGENTS.md: "recall before you answer" instead of "hope the agent remembers to search"; prints only, never edits host files | ✅ v0.10 |
 | **Hybrid retrieval + RRF** — three recall routes (vector + keyword for exact-literal matches + one-hop SAN graph) fused by Reciprocal Rank Fusion (k=60): multi-route consensus wins, nothing to tune | ✅ v0.9 |
 | **Budgeted injection + silence contract** — Path A blocks obey a token budget; the first over-budget entry is injected as a **prefix of the original text** (truncation ≠ rewriting — content freezing intact); when nothing passes the quality bar the tool says so ("no intervention this turn") instead of padding weak hits | ✅ v0.9 |
 | **Slim MCP tool descriptions** — each of the 3 tool descriptions compressed to one line: descriptions live in every client session, so this is where token savings start | ✅ v0.9 |
@@ -57,6 +59,23 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Portable `membridge.exe` (ncnn-style per-platform binaries) | ✅ v0.4 |
 | AEE adaptive evolution (α / π_nav / θ_window) | 📋 Phase 4 (interfaces reserved) |
 | Path B hidden-state fusion | 🧪 Phase 4 experimental branch |
+
+## How it differs from alternatives
+
+| | MemoryBridge | OpenMemory (mem0) | MemGPT/Letta | memU |
+|---|---|---|---|---|
+| Cross-app sharing (MCP) | ✅ | ✅ | — | ✅ (host adapters) |
+| **Cross-device sync** (phone↔PC↔edge) | ✅ core capability (E2E encrypted; the netdisk only ever sees ciphertext) | ❌ device-locked | ❌ | via its hosted cloud |
+| **Preloading** before you switch (zero wait) | ✅ | ❌ passive retrieval | ❌ | ❌ |
+| **Content freezing** (never rewrites memory) | ✅ architectural constraint | ❌ LLM summarization | partial | ❌ (LLM auto-distillation into the store) |
+| Human-auditable memory | ✅ v0.10 Markdown export view | ❌ | ❌ | ✅ (Markdown as memory) |
+| Privacy tiers (migration tags + scene domains) | ✅ | partial | ❌ | ❌ |
+
+> memU deserves credit: its automatic skill distillation and zero-LLM backend
+> are genuinely good. The fork is where memory content comes from — memU lets
+> the LLM distill and *generate* it; MemoryBridge insists on explicit writes
+> (`memory_add`), with experience captured via the `kind=procedure` convention
+> below, so hallucinations never get a path into the store.
 
 ## Field convergence: external memory is getting backed by frontier research
 
@@ -85,6 +104,17 @@ v0.9 is a borrowing release aligned with these three works (retrieval quality /
 token economy / gap discovery), touching only the retrieval, injection, and
 scheduling layers — **never rewriting memory content**. Item-by-item mapping and
 the explicit not-borrowed list: [Roadmap, "Borrowing release"](docs/roadmap.md).
+
+A fourth data point comes from the open-source project **memU**
+(NevaMind-AI): it likewise insists on a **zero-LLM memory backend** — the
+"what is worth remembering" judgment stays with the host agent while the
+memory service only stores, embeds, and retrieves. That division of labor is
+isomorphic to MemoryBridge's core. The fork is twofold: memU lets the LLM
+distill and *generate* memory content (MemoryBridge refuses: content freezing),
+and its cross-device story runs through its hosted cloud (MemoryBridge insists
+on self-held E2E-encrypted channels). v0.10 borrows its "memory as files"
+auditability (`membridge export`, a read-only view that never writes back) —
+see [Roadmap, "memU borrowing release"](docs/roadmap.md).
 
 ## Quick start
 
@@ -117,11 +147,23 @@ membridge publish --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge publish --dir "D:/netdisk-sync/membridge" --force   # rebuild a wiped channel
 membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge stats
+membridge export                                # human-readable Markdown view (--out writes to disk)
+membridge recall-hint                           # print the resident recall one-liner (paste it yourself)
 membridge rebuild-edges                             # full rebuild of association edges (regular adds build incrementally)
 membridge doctor                                    # env self-check (DB location health + memory gaps)
 ```
 
 The passphrase can also come from the `MEMBRIDGE_PASSPHRASE` environment variable.
+
+**Experience-distillation convention (with `kind` tags).** When you solve a hard
+problem, store the *experience* so future similar tasks hit it directly:
+
+```bash
+membridge add "arm64 deploys segfault; switching to the x86 image fixed it" --kind procedure --tags dev
+```
+
+`--kind procedure` = "what was tried, what happened"; `--kind fact` = stable
+facts. Strictly optional — defaults are unchanged.
 
 **Recovering a lost channel.** `publish` only sends memories that are not yet marked
 as published locally. If the delta packets are deleted on the cloud side (or a sync

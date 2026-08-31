@@ -242,6 +242,42 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    """导出人类可读的 Markdown 视图（只读渲染，永不回写——内容冻结）。"""
+    from .export import render_markdown
+
+    store = _open_store(args)
+    text = render_markdown(store)
+    if args.out:
+        out_path = os.path.normpath(
+            os.path.abspath(os.path.expanduser(args.out.strip()))
+        )
+        if os.path.exists(out_path) and not args.force:
+            print(f"目标已存在，拒绝覆盖：{out_path}（确要覆盖请加 --force）")
+            return 2
+        Path(out_path).write_text(text, encoding="utf-8")
+        print(f"已导出 {store.count_nodes()} 条记忆 → {out_path}")
+        print("提示：这是只读视图，手工编辑它不会写回记忆库。")
+    else:
+        print(text)
+    return 0
+
+
+RECALL_HINT = (
+    "开始任务前，先用 memory_search（as_context=true）检索与当前任务相关的"
+    "跨设备记忆并采用；若返回「本轮不干预」，不要编造记忆。"
+)
+
+
+def cmd_recall_hint(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """打印可粘贴进宿主指令文件的常驻召回提示（自愿启用，本工具不代写）。"""
+    print("把下面这一行，粘贴进你 AI 助手的常驻指令文件即可：")
+    print("（Claude Code → CLAUDE.md；Codex / 通用 → AGENTS.md；Cursor → 规则文件）")
+    print()
+    print(RECALL_HINT)
+    return 0
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import main as mcp_main
 
@@ -396,6 +432,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("stats", help="记忆库统计")
     p.set_defaults(func=cmd_stats)
+
+    p = sub.add_parser("export", help="导出人类可读的 Markdown 视图（只读，不回写）")
+    p.add_argument("--out", default=None, help="输出 .md 文件路径（默认打印到屏幕）")
+    p.add_argument("--force", action="store_true", help="目标已存在时允许覆盖")
+    p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("recall-hint",
+                       help="打印常驻召回提示（粘贴进 CLAUDE.md / AGENTS.md，自愿启用）")
+    p.set_defaults(func=cmd_recall_hint)
 
     p = sub.add_parser(
         "rebuild-edges",

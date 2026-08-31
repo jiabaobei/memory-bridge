@@ -2,6 +2,38 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.10.0] - 2026-08-31
+
+memU 借鉴版：对照开源竞品 memU（NevaMind-AI，「记忆存成 Wiki」）做的取舍
+式借鉴——借可审计性，不借其「LLM 自动蒸馏入库」管线（该管线让 LLM 生成
+记忆内容，与内容冻结原则相悖；写入主动权保留在明面上的 `memory_add`）。
+
+### 新增
+
+- **`membridge export`**：把整座记忆库渲染成人类可读的 Markdown（按场景域
+  分组、组内按 fact/procedure 分节、逐条带设备/时间/迁移出处）。**只读
+  视图，永不回写**——手工编辑导出文件不会、也无法流回记忆库，内容冻结
+  承诺多了一个人人可验证的出口。默认打印，`--out` 落盘（拒绝覆盖，
+  `--force` 显式允许）
+- **`membridge recall-hint`**：打印一行常驻召回提示，用户自愿粘贴进宿主
+  指令文件（CLAUDE.md / AGENTS.md / Cursor 规则）——把「被动等 Agent 想起
+  调工具」变成「每个任务前主动召回」。本工具只打印、不代写宿主文件
+  （借鉴 memU 的 inject 缝，但改为完全用户主导）
+
+### 文档
+
+- README / README_EN 对比表补 memU 列（诚实标注其强项：技能自动提炼、
+  Markdown 透明记忆；我们的强项：跨设备 E2E 同步、预加载、内容冻结、
+  隐私分级）；「领域收敛」章节补 memU 为第四个独立数据点（服务端零 LLM
+  的共识）
+- 经验沉淀约定：README 明确「解决完难题用 `kind=procedure` 存一条」——
+  v0.9 的 kind 标注正是 memU 技能线的手工版落点
+- 路线图 Phase 4 UEP 补验证任务：SAN 图路召回增益（memU 的 ADR 明确
+  弃图，作为反方观点必须在评测中用数据回答）
+
+测试：新增 `tests/test_export.py` 5 项（含导出逐字渲染的内容冻结守卫、
+覆盖保护）；59 → 64 项
+
 ## [0.9.0] - 2026-08-31
 
 借鉴版：对照三份外部研究（Knowledge OS 混合检索、Meta Proactive Memory
