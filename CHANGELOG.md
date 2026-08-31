@@ -2,6 +2,41 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.11.0] - 2026-08-31
+
+移动端接入版：手机与平板加入跨设备记忆圈。PC ↔ 笔记本继续走网盘差分包；
+移动端无法复用（网盘 App 没有本地同步文件夹、iOS 跑不了 Python），改走
+两条新路线——**路线 A 基站模式落地为代码，路线 B（Android Termux 完整
+节点）落地为文档**。核心依旧零依赖：网关只用 Python 标准库。
+
+### 新增
+
+- **`membridge gateway`**：手机/平板接入网关（路线 A「瘦客户端 + 基站」）。
+  家里一台常开设备跑网关，手机经 HTTP 读写该设备上的记忆库——日常只需
+  Add / Search / Preload 三个动作，无需持有完整记忆库。内置「随身记」
+  网页（浏览器打开即用，可加主屏幕）；接口 `/add` `/search` `/preload`
+  `/health`，iOS 快捷指令 / 任意 HTTP 客户端可直连
+- **访问口令强制**：命令行 > 环境变量 `MEMBRIDGE_TOKEN` > 库内自动托管
+  （`membridge gateway-token` 查看，同 show-passphrase 的托管哲学）；
+  恒定时间比较，错口令一律 401
+- **隐私边界显式化**：明文 HTTP 仅限局域网 / Tailscale 自持组网；跨网
+  可达用 `--cert/--key` 启用 TLS；启动输出与文档反复声明"绝不开公网
+  明文端口"
+- **`docs/mobile.md`**：移动端完整指南——路线 A 三种接法（内置页面 /
+  iOS 快捷指令逐步教程 / 任意客户端）+ 接口表；路线 B Termux 完整节点
+  （pkg/pip 安装、rclone 挂网盘做通道、crond 定时、已知限制）
+
+### 工程
+
+- `MemoryStore` 连接放开 `check_same_thread`（网关子线程处理请求需要；
+  并发安全由既有的 WAL + busy_timeout + 事务收敛保证）
+- 复用既有基建：检索走 `hybrid_search`、注入走 `serialize`（沉默契约
+  在网关侧同样生效）、写入走与 `memory_add` 完全一致的管线（场景分类 /
+  迁移判定 / 增量建边）——内容冻结无任何例外
+
+测试：新增 `tests/test_gateway.py` 6 项（真实起服务真请求：鉴权拒绝、
+读写往返、沉默契约、内置页面、错误消息、口令托管）；64 → 70 项
+
 ## [0.10.0] - 2026-08-31
 
 memU 借鉴版：对照开源竞品 memU（NevaMind-AI，「记忆存成 Wiki」）做的取舍

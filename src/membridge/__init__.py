@@ -21,7 +21,7 @@ from .san import build_edges
 from .retrieval import hybrid_search
 from . import capabilities, clients, dss, heat, injection, privacy, sync_agent, transport, vault
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 __all__ = [
     "MemoryNode",

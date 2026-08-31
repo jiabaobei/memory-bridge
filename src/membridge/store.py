@@ -96,7 +96,9 @@ class MemoryStore:
         # 父目录不存在时 sqlite3 会拒绝建库（v0.4.1 修复：init 在全新机器上崩溃）
         parent = os.path.dirname(os.path.abspath(path))
         os.makedirs(parent, exist_ok=True)
-        self.conn = sqlite3.connect(path, timeout=5.0)
+        # check_same_thread=False：v0.11 网关在子线程处理请求需要跨线程用连接；
+        # 并发安全由 WAL + busy_timeout + 事务收敛保证（MCP 多进程场景本就如此）
+        self.conn = sqlite3.connect(path, timeout=5.0, check_same_thread=False)
         # WAL：读写不互斥；busy_timeout：并发写短暂等待而非立刻报 locked
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA busy_timeout=5000")

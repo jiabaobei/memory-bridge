@@ -10,6 +10,7 @@
 
 | 版本 | 日期 | 改版说明 |
 |---|---|---|
+| v0.11.0 | 2026-08-31 | 移动端接入版：`gateway` 手机/平板接入网关（基站模式，口令强制 + 内置随身记页面，纯标准库）、`docs/mobile.md`（iOS 快捷指令教程 + Android Termux 完整节点路线）；移动端正式加入跨设备记忆圈 |
 | v0.10.0 | 2026-08-31 | memU 借鉴版：`export` Markdown 只读视图（记忆可审计可带走，永不回写）、`recall-hint` 常驻召回提示（用户自愿粘贴）；对比表补 memU；路线图记图路验证任务 |
 | v0.9.0 | 2026-08-31 | 借鉴版：三路混合检索 + RRF 融合、预算注入 + 超额截断、沉默契约、MCP 工具描述瘦身、缺口发现、可选 kind 标注；README 增「领域收敛」章节（Metis / Proactive Memory Agent / Portable Computer 背书） |
 | v0.8.2 | 2026-08-31 | 文档：论文预印本 Zenodo DOI 链接与 bibtex doi 字段（中英对齐） |
@@ -28,6 +29,28 @@
 | v0.2.0 | 2026-08-29 | 一键接入：init 自动配置主流 AI 平台（MCP / 技能 / 手动指南），新增 doctor 自检 |
 | v0.1.1 | 2026-08-29 | 修复 mcp 2.x 兼容（锁定 mcp>=1.2,<2），依赖缺失给可操作提示 |
 | v0.1.0 | 2026-08-29 | 首个公开版本：跨设备、跨平台 AI 共享记忆层（SAN + DSS + PAMS + Path A + MCP） |
+
+## 移动端接入版 ✅（v0.11.0，2026-08-31）
+
+手机与平板无法复用「网盘差分包」模型（网盘 App 没有本地同步文件夹；
+iOS 跑不了 Python），本版给出两条分开的路线，详见
+[docs/mobile.md](mobile.md)：
+
+- [x] **路线 A「瘦客户端 + 基站」**：`membridge gateway`（纯标准库
+      http.server，零新依赖）。手机不持有完整记忆库，经口令保护的
+      HTTP 读写家里常开设备上的库——移动端日常只需要 Add / Search /
+      Preload 三个动作。内置随身记网页；`/add` `/search` `/preload`
+      接口供 iOS 快捷指令与任意客户端直连；跨网推荐 Tailscale 自持
+      组网，支持 --cert/--key TLS，绝不开公网明文端口。写入管线与
+      `memory_add` 完全一致——内容冻结无任何例外
+- [x] **路线 B「Android 完整节点」**（文档方案）：Termux 跑完整
+      membridge，rclone 挂网盘目录做差分包通道，crond 定时——手机
+      作为平等节点，离线可用
+- 设计判断：路线 A 其实是 Phase 2「自托管中继」的轻量先行形态——
+      中继不是独立服务，就是你自己家里那台 PC
+
+遗留：iOS 原生 App / Android 原生 App（若做）都定位为路线 A 的
+客户端壳，不引入新协议。
 
 ## memU 借鉴版 ✅（v0.10.0，2026-08-31）
 
@@ -156,7 +179,8 @@ Perplexity Portable Computer 作为外置记忆路线的背书。测试 51 → 5
 - [ ] TMT hot/cold 两级驻留（对应论文 T1/T2/T3）
 - [ ] 预加载时机：显式信号 + 简单时间模式（θ_window 固定冷启动值）
 - [ ] L2 跨场景域显式授权流
-- [ ] 移动端接入：Android（Termux/MobileMCP 优先）、iOS 快捷指令
+- [x] 移动端接入（v0.11 路线 A 网关 + 路线 B Termux 指南先行落地，
+      见 docs/mobile.md）；待办：原生 App 壳（如需）、移动端预加载推送
 - [ ] 记忆库整库加密（SQLCipher 或应用层加密）
 
 ## Phase 4 — AEE 与研究模块

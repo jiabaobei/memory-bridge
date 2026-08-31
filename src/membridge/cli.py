@@ -278,6 +278,62 @@ def cmd_recall_hint(args: argparse.Namespace) -> int:  # noqa: ARG001
     return 0
 
 
+def cmd_gateway(args: argparse.Namespace) -> int:
+    """手机/平板接入网关（路线 A：瘦客户端 + 基站；口令强制，详见 docs/mobile.md）。"""
+    import socket
+
+    from .gateway import create_gateway_server, resolve_token, serve_gateway
+    from .mcp_server import open_store
+
+    store = open_store(args.db if args.db != "membridge.db" else None)
+    embedder = capabilities.best_embedder()
+    token = resolve_token(store, token_arg=args.token,
+                          env_token=os.environ.get("MEMBRIDGE_TOKEN"))
+    server = create_gateway_server(store, embedder, token,
+                                   host=args.host, port=args.port)
+
+    lan_ip = args.host
+    if args.host in ("0.0.0.0", "::"):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+        except OSError:
+            lan_ip = "127.0.0.1"
+    scheme = "https" if args.cert else "http"
+    print(f"记忆桥网关已启动（设备 {store.device_name}）")
+    print(f"  手机/平板访问：{scheme}://{lan_ip}:{args.port}")
+    print(f"  访问口令：{token}")
+    print("  （浏览器打开即内置随身记页面；iOS 快捷指令 / 任意 HTTP 客户端")
+    print("    调 /add、/search，鉴权头 Authorization: Bearer <口令>）")
+    if not args.cert:
+        print("  ⚠️ 当前为明文 HTTP：仅限局域网 / Tailscale 等自持加密网络内使用；")
+        print("    跨网可达请改用 --cert/--key 启用 TLS，绝不开公网明文端口")
+    try:
+        serve_gateway(server, certfile=args.cert, keyfile=args.key)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        store.close()
+    return 0
+
+
+def cmd_gateway_token(args: argparse.Namespace) -> int:
+    """显示网关访问口令（首次查看时自动生成并托管，同 show-passphrase 哲学）。"""
+    from .gateway import resolve_token
+    from .mcp_server import open_store
+
+    store = open_store(args.db if args.db != "membridge.db" else None)
+    token = resolve_token(store, env_token=os.environ.get("MEMBRIDGE_TOKEN"))
+    store.close()
+    print("网关访问口令（配置手机快捷指令 / 浏览器页面时使用）：")
+    print(token)
+    print("\n提示：请勿泄露；泄露后用 membridge gateway --token <新口令> 更换。")
+    return 0
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     from .mcp_server import main as mcp_main
 
@@ -449,6 +505,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--min-weight", type=float, default=0.15,
                    help="低于该权重的关联不落库（默认 0.15）")
     p.set_defaults(func=cmd_rebuild_edges)
+
+    p = sub.add_parser("gateway",
+                       help="手机/平板接入网关（基站模式：口令保护的 HTTP 接入，详见 docs/mobile.md）")
+    p.add_argument("--host", default="0.0.0.0", help="监听地址（默认 0.0.0.0，局域网可访问）")
+    p.add_argument("--port", type=int, default=8766)
+    p.add_argument("--token", default=None,
+                   help="访问口令（默认：环境变量 MEMBRIDGE_TOKEN，其次库内托管口令）")
+    p.add_argument("--cert", default=None, help="TLS 证书（跨网可达时启用，配合 --key）")
+    p.add_argument("--key", default=None, help="TLS 私钥")
+    p.set_defaults(func=cmd_gateway)
+
+    p = sub.add_parser("gateway-token", help="显示网关访问口令（首次自动生成并托管）")
+    p.set_defaults(func=cmd_gateway_token)
 
     p = sub.add_parser("mcp", help="启动 MCP server（供 Claude Code / Cursor 等接入）")
     p.add_argument("--http", action="store_true",

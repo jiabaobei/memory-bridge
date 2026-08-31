@@ -3,7 +3,7 @@
 > 🌉 **给 AI 一个跟着你走的记忆** —— 跨设备 × 跨平台的共享记忆层
 >
 > CDSMP（大模型跨设备语义记忆连续性架构）的官方工程实现。
-> [English](README_EN.md) · [设计 RFC](docs/RFC-001-architecture.md) · [路线图](docs/roadmap.md) · [隐私威胁模型](docs/threat-model.md) · [版本历程](CHANGELOG.md)
+> [English](README_EN.md) · [设计 RFC](docs/RFC-001-architecture.md) · [路线图](docs/roadmap.md) · [移动端接入](docs/mobile.md) · [隐私威胁模型](docs/threat-model.md) · [版本历程](CHANGELOG.md)
 
 ![Version](https://img.shields.io/github/v/release/jiabaobei/memory-bridge)
 ![CI](https://github.com/jiabaobei/memory-bridge/actions/workflows/ci.yml/badge.svg)
@@ -25,10 +25,11 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.10）
+## 当前能力（v0.11）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
+| 手机 / 平板接入 | `membridge gateway` 基站模式：家里一台常开设备跑网关，手机经口令保护的 HTTP 读写记忆库（内置随身记网页，可加主屏幕；iOS 快捷指令直连），纯标准库零新依赖；Android 完整节点（Termux）见 [移动端指南](docs/mobile.md) | ✅ v0.11 |
 | Markdown 导出视图 | `membridge export` 把整座库渲染成人类可读的 Markdown（场景分组 + fact/procedure 分节 + 出处）——**只读视图，永不回写**，记忆可审计、可进 Git、可带走 | ✅ v0.10 |
 | 常驻召回提示 | `membridge recall-hint` 打印一行提示，自愿粘贴进 CLAUDE.md / AGENTS.md——「任务前主动召回」代替「被动等想起」；只打印不代写宿主文件 | ✅ v0.10 |
 | 三路混合检索 + RRF | 向量 + 关键词（字面命中兜底）+ SAN 图谱一跳三路召回，按排名做 RRF 融合（k=60）——多路共识天然加分，无新参数可调 | ✅ v0.9 |
@@ -114,6 +115,7 @@ memU 用 LLM 蒸馏**生成**记忆内容（记忆桥拒绝：内容冻结），
 | **远程 MCP（HTTP 模式）** | 扣子 Coze 等支持远程 MCP 的平台（`membridge mcp --http` 后经 URL 接入） | ✅ v0.2 |
 | **init 手动指南** | 字节 Trae 等界面化 MCP 平台（init 打印逐步指引） | ✅ v0.2 |
 | **CLI / SDK** | 任意能调用命令行的环境（剪贴板兜底：`membridge context "<主题>"`） | ✅ v0 |
+| **手机 / 平板（网关基站模式）** | `membridge gateway`：iOS / Android / 平板的浏览器（内置随身记页面）与快捷指令等任意 HTTP 客户端；Android 也可 Termux 跑完整节点（[移动端指南](docs/mobile.md)） | ✅ v0.11 |
 | **浏览器插件** | 豆包、Kimi、ChatGPT 网页版等封闭 Web 助手 | 📋 Phase 1+ |
 
 > 对完全封闭、不支持任何外部接入的 App，兜底方案是"剪贴板/分享"通道
@@ -148,6 +150,8 @@ membridge apply delta.json                              # 并入差分包
 membridge publish --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 发到网盘通道
 membridge fetch   --dir "D:\百度网盘同步盘\membridge" --passphrase 我的口令   # 从网盘取回
 membridge stats                                         # 记忆库概况
+membridge gateway                                       # 手机/平板接入网关（基站模式，口令保护）
+membridge gateway-token                                 # 显示网关访问口令（配置手机时用）
 membridge export                                        # 导出人类可读的 Markdown 视图（--out 落盘）
 membridge recall-hint                                   # 打印常驻召回提示（自愿粘贴进 CLAUDE.md / AGENTS.md）
 membridge rebuild-edges                                 # 全量重建语义关联边（常规 add 只增量建边）
@@ -215,7 +219,7 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
               ┌────────────────────────────────────────────────┐
               │           跨平台接入层（连接器）                  │
               │  MCP Server │ CLI │ 平台技能（WorkBuddy 等）     │
-              │        移动端 / 浏览器插件（计划中）               │
+              │   手机/平板（网关 ✅）│ 浏览器插件（计划中）        │
               └───────────────────────┬────────────────────────┘
                                       │ 仅开放 Add / Search / Preload
    ┌──────────────────────────────────▼───────────────────────────────────┐
@@ -240,7 +244,7 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 - **Phase 0 ✅** 仓库与骨架、核心引擎 v0（SAN + Path A + DSS 本地差分 + PAMS L1/L2）、MCP Server
 - **Phase 1 🔄** `membridge init` 一键接入 + doctor 自检 + WorkBuddy 技能 + 远程 MCP 已完成（v0.2）；待办：PyPI 发布、真实 embedding 后端、TS SDK
 - **Phase 2** 跨设备传输通道：E2E 加密中继（自托管）、版本向量、冲突解决
-- **Phase 3** TMT 边缘驻留（hot/cold 两级）、预加载时机、移动端接入、L2 授权流
+- **Phase 3** TMT 边缘驻留（hot/cold 两级）、预加载时机、移动端原生壳（网关已先行，v0.11）、L2 授权流
 - **Phase 4** AEE 自适应进化（α / π_nav / θ_window）、Path B experimental 分支、L3 差分隐私、UEP 评测复现脚本
 
 详见 [docs/roadmap.md](docs/roadmap.md)。

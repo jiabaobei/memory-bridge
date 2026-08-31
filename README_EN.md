@@ -3,7 +3,7 @@
 > 🌉 **Give your AI a memory that follows you** — a cross-device × cross-platform shared memory layer.
 >
 > The official engineering implementation of CDSMP (Cross-Device Semantic Memory Persistence).
-> [中文文档](README.md) · [Design RFC](docs/RFC-001-architecture.md) · [Roadmap](docs/roadmap.md) · [Threat model](docs/threat-model.md) · [Changelog](CHANGELOG.md)
+> [中文文档](README.md) · [Design RFC](docs/RFC-001-architecture.md) · [Roadmap](docs/roadmap.md) · [Mobile guide](docs/mobile.md) · [Threat model](docs/threat-model.md) · [Changelog](CHANGELOG.md)
 
 ![Version](https://img.shields.io/github/v/release/jiabaobei/memory-bridge)
 
@@ -29,12 +29,14 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | init skill install (SKILL.md) | WorkBuddy (`~/.workbuddy/skills`), Claude skills dir | ✅ |
 | Remote MCP (HTTP mode) | Coze and other remote-MCP platforms via `membridge mcp --http` | ✅ |
 | Manual guides | ByteDance TRAE and UI-based MCP clients (init prints steps) | ✅ |
+| Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.10)
+## Status (v0.11)
 
 | Capability | Status |
 |---|---|
+| **Phone / tablet access** — `membridge gateway` (base-station mode): one always-on home device runs a token-protected HTTP gateway; phones read/write that device's store without holding a full copy (they only ever need Add / Search / Preload). Built-in pocket-note web page; iOS Shortcuts and any HTTP client work out of the box; pure stdlib, zero new dependencies. Android full node (Termux) documented in the [mobile guide](docs/mobile.md) | ✅ v0.11 |
 | **Markdown export view** — `membridge export` renders the whole store as human-readable Markdown (grouped by scene, sectioned by fact/procedure, with device/time provenance): **a read-only view that never writes back** — memories become auditable, git-friendly, portable | ✅ v0.10 |
 | **Resident recall hint** — `membridge recall-hint` prints a one-liner you may paste into CLAUDE.md / AGENTS.md: "recall before you answer" instead of "hope the agent remembers to search"; prints only, never edits host files | ✅ v0.10 |
 | **Hybrid retrieval + RRF** — three recall routes (vector + keyword for exact-literal matches + one-hop SAN graph) fused by Reciprocal Rank Fusion (k=60): multi-route consensus wins, nothing to tune | ✅ v0.9 |
@@ -147,6 +149,8 @@ membridge publish --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge publish --dir "D:/netdisk-sync/membridge" --force   # rebuild a wiped channel
 membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
 membridge stats
+membridge gateway                               # phone/tablet gateway (base-station mode, token-protected)
+membridge gateway-token                         # show the gateway access token (when configuring a phone)
 membridge export                                # human-readable Markdown view (--out writes to disk)
 membridge recall-hint                           # print the resident recall one-liner (paste it yourself)
 membridge rebuild-edges                             # full rebuild of association edges (regular adds build incrementally)
