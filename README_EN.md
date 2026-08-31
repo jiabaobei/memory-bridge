@@ -130,6 +130,17 @@ substrate) is a fully self-held, zero-cloud personal AI stack (recipes in the
 [mobile guide](docs/mobile.md)). The boundary stays sharp: the local model
 lives on the host side; the memory core remains LLM-free.
 
+A sixth data point comes from inside the **parametric camp**: Qualcomm AI
+Research's MoNe (ICML 2026) bolts an online-writable neural memory onto a
+**frozen** Transformer backbone — the context is written once, queries never
+re-read it. Its architectural discipline is isomorphic to MemoryBridge's:
+freeze the body, only the bolt-on is writable. The fork is where memory lives:
+MoNe writes history into weights (parametric state), the very route Metis
+concedes is hard to audit, hard to delete precisely, and hard to bound for
+privacy; MemoryBridge keeps memory in human-auditable external storage.
+**Freezing is the shared discipline of both camps — the only difference is
+what gets frozen: they freeze the model, we freeze the content.**
+
 ## Quick start
 
 ```bash
