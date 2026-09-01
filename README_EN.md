@@ -124,6 +124,24 @@ on self-held E2E-encrypted channels). v0.10 borrows its "memory as files"
 auditability (`membridge export`, a read-only view that never writes back) —
 see [Roadmap, "memU borrowing release"](docs/roadmap.md).
 
+**GitNexus** (abhigyanpatwari/GitNexus), a zero-server code knowledge-graph
+engine, is the reference for v0.14. The useful insight is not "use a graph" —
+MemoryBridge has had graph retrieval since v0.9 (vector + keyword + one-hop SAN
+expansion, RRF-fused) — but that **a graph is only as good as the certainty of
+its edges**: GitNexus derives edges from an AST, while MemoryBridge's came from
+a statistical proxy (character n-gram co-occurrence). v0.14 therefore adds a
+deterministic anchor layer: zero-dependency regex extraction of code symbols /
+file paths / repos / tags (no AST, no parser, no new dependency), with memories
+sharing an anchor linked by an `entity` edge — plus typed edges (`kind` +
+`evidence`) so every link can answer "why are these related?". Its
+`[[file:line]]` provenance becomes recall-reason annotations, and its community
+detection becomes cluster preload (`preload --cluster`, union-find). Explicitly
+**not** borrowed: graph databases (they would break the single-file promise),
+full Tree-sitter AST parsing (memories are natural language, and it would break
+zero dependencies), PDG / taint analysis, and post-commit auto-reindexing
+(content freezing means there is no stale index to rebuild) — see
+[Roadmap, "GitNexus borrowing release"](docs/roadmap.md).
+
 A fifth data point comes from the **edge**: devices are becoming first-class AI
 infrastructure. Ornith-1.5's 9B quantized build (~1.5 GB) runs directly on
 phones; OlliteRT turns a retired Android phone into a 24/7 LAN model server.

@@ -355,6 +355,12 @@ pytest -q
   v0.9/v0.10 同构，是路线的外部背书；v0.13.1 仅借鉴其「已知目标直达」
   洞察（检索 `scope` 范围直达）。云端托管索引、爬取入库、多包生态不在
   借鉴之列，理由见 [路线图「Context7 借鉴版」一节](docs/roadmap.md)。
+- [GitNexus](https://github.com/abhigyanpatwari/GitNexus)（零服务器代码
+  知识图谱引擎）：v0.14 借鉴其「图谱的价值在关系确定」这一核心思路，
+  降级落地为**确定性实体锚点**（零依赖正则抽取，不解析 AST）与类型化边；
+  其 `[[file:line]]` 溯源思路落为召回理由标注，社区检测落为整簇预加载。
+  图数据库、Tree-sitter 全量 AST、PDG 污点分析、提交后重索引一律不借
+  （与三原则相悖），理由见 [路线图「GitNexus 借鉴版」一节](docs/roadmap.md)。
 
 ## License
 
