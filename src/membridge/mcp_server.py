@@ -79,7 +79,7 @@ def create_server(
     @mcp.tool()
     def memory_add(text: str, tags: str = "", migration: str = "",
                    kind: str = "") -> str:
-        """写入一条跨设备记忆：一句话一条最省 token；tags 逗号分隔；migration 可选 local/edge/cloud（默认自动）；kind 可选 fact（事实）/procedure（试过什么、结果）。"""
+        """写入一条跨设备记忆：一句话一条最省 token；tags 逗号分隔；migration 可选 local/edge/cloud（默认自动）；kind 可选 fact（事实）/procedure（经验）/handover（交接卡：goal:/done:/failed:/next:/refs: 行前缀，新卡自动取代旧卡并常驻注入的工作台）。"""
         node = MemoryNode(
             content=text,
             embedding=embedder.embed(text),
@@ -87,12 +87,16 @@ def create_server(
             scene=classify_scene(text),
             device=store.device_name,
             migration=migration.strip() or default_migration(text),
-            kind=kind.strip() if kind.strip() in ("fact", "procedure") else "",
+            kind=kind.strip() if kind.strip() in ("fact", "procedure", "handover") else "",
         )
         with store.transaction():
             store.add(node)
             build_edges(store, embedder, only_new=node)
         msg = f"已记忆（{node.node_id}，场景 {node.scene}，迁移 {node.migration}）"
+        if node.kind == "handover":
+            from .handoff import summary
+
+            msg += f"。工作台已切到这张交接卡：{summary(node)}"
         if len(text) > SOFT_LENGTH_HINT:
             msg += (
                 f"。提示：本条超过 {SOFT_LENGTH_HINT} 字，"
@@ -103,12 +107,17 @@ def create_server(
     @mcp.tool()
     def memory_search(query: str, k: int = 5, as_context: bool = False,
                       budget: int = 0, scope: str = "") -> str:
-        """检索记忆（三路混合，弱命中已过滤）；已知记忆在哪可用 scope 直达（如 tag:dev / kind:procedure）；as_context=true 返回带预算可注入块，无高质量命中明确告知不注入。"""
+        """检索记忆（三路混合，弱命中已过滤）；已知记忆在哪可用 scope 直达（如 tag:dev / kind:procedure / kind:handover）；as_context=true 返回带预算可注入块（最新交接卡恒定注入在工作台小节），无高质量命中明确告知不注入。"""
         hits = hybrid_search(store, embedder, query, k=k, scope=scope)
         if as_context:
+            from .handoff import workbench, workbench_block
             from .injection import serialize
 
-            return serialize((n for n, _ in hits), max_chars=budget or 1500)
+            active = workbench(store)
+            nodes = (n for n, _ in hits
+                     if not (active and n.node_id == active.node_id))
+            return serialize(nodes, max_chars=budget or 1500,
+                             workbench=workbench_block(store))
         if not hits:
             return "（暂无相关记忆——本轮不注入，保持沉默）"
         return "\n".join(

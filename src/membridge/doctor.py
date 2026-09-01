@@ -99,6 +99,21 @@ def run_doctor(out=print) -> int:
             sample = "、".join(f"「{g['q']}」" for g in gaps[:3])
             out(f"  💡 记忆缺口: 最近 {len(gaps)} 类问题没查到记忆（如 {sample}）")
             out("     （系统只提醒，是否补写由你决定：membridge add \"...\"）")
+        # 交接班状态（v0.15）：工作台要么新鲜要么不在，过期卡主动告警
+        from .handoff import (HANDOFF_STALE_HOURS, age_hours,
+                              latest_handoff, summary)
+
+        card = latest_handoff(s)
+        if card is not None:
+            hours = age_hours(card)
+            if hours <= HANDOFF_STALE_HOURS:
+                out(f"  🔖 当前工作台: {summary(card)}（{hours:.1f} 小时前）")
+            else:
+                warnings.append(
+                    f"最新交接卡已过期（{hours / 24:.0f} 天前）——过期工作台"
+                    "不再恒定注入，只走检索。收工前写新卡："
+                    "membridge handoff 查看模板"
+                )
         s.close()
     else:
         out("  ⚠️ 尚未创建（运行 membridge init 即可）")

@@ -19,9 +19,9 @@ from .node import MemoryNode
 from .store import MemoryStore
 from .san import build_edges, build_entity_edges, extract_entities
 from .retrieval import hybrid_search, search_with_reasons
-from . import capabilities, clients, dss, heat, injection, privacy, sync_agent, transport, vault
+from . import capabilities, clients, dss, handoff, heat, injection, privacy, sync_agent, transport, vault
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 __all__ = [
     "MemoryNode",
@@ -38,6 +38,7 @@ __all__ = [
     "capabilities",
     "clients",
     "dss",
+    "handoff",
     "heat",
     "injection",
     "privacy",

@@ -25,10 +25,11 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.14）
+## 当前能力（v0.15）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
+| 交接班（交接卡 + 工作台） | 第三种记忆类型 `kind=handover`：任务告一段落、上下文将满、或切换设备前写一张交接卡（`goal:/done:/failed:/next:/refs:` 行前缀约定；`failed` 行用硬句式留下「试过什么；因为什么；除非什么否则别重试」）。全库最新未过期交接卡成为**工作台**：注入时恒定在场、不走相关性检索——交接卡是状态声明，不是检索命中；新卡自动取代旧卡（取代是推导出来的，零新增状态位，跨设备同步后各端自动收敛到同一张卡）；超 7 天未更新自动降级为普通记忆（过期工作台比没有更危险）；交接卡触点边权重结构衰减，防止其连成超级枢纽抬排名；`membridge handoff` 查看工作台，`membridge handoff-hint` 打印常驻交接提示，随身记页面内置交接卡表单 | ✅ v0.15 |
 | 类型化边 + 证据 | 边带 `kind`（semantic / cooccur / entity）+ 极短 `evidence`——每条边可回答「为什么相关」；存量库打开自动迁移（旧边标 semantic），只加结构不碰内容 | ✅ v0.14 |
 | 实体锚点边 | 零依赖正则抽取代码符号 / 文件路径 / 仓库 / 标签为确定性锚点，共享同一锚点即连边——不靠字面巧合，中英混写也能连上 | ✅ v0.14 |
 | 整簇预加载 | `preload --cluster`：连通分量把记忆切簇，按「当前最热节点所在簇」整簇加载——到新设备，整条任务线的上下文已就位 | ✅ v0.14 |
@@ -163,9 +164,11 @@ python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 
 
 ```bash
 membridge init                                           # 一键接入本机检测到的 AI 平台
-membridge add "用户在开发记忆桥项目" --tags dev          # 写入记忆（可选 --kind fact / procedure）
+membridge add "用户在开发记忆桥项目" --tags dev          # 写入记忆（可选 --kind fact / procedure / handover）
 membridge search "记忆桥" -k 3                          # 三路混合检索（向量 + 关键词 + 图谱，RRF 融合；--scope tag:dev 范围直达）
-membridge context "继续早上的讨论"                       # 输出 Path A 上下文块（无命中时明确"本轮不注入"）
+membridge context "继续早上的讨论"                       # 输出 Path A 上下文块（最新交接卡恒定注入在【工作台】小节；无命中时明确"本轮不注入"）
+membridge handoff                                       # 查看当前工作台：最新交接卡原文与生效状态
+membridge handoff-hint                                  # 打印常驻交接提示（自愿粘贴进 CLAUDE.md / AGENTS.md）
 membridge preload 我的手机                               # 预加载候选（PAMS 门控）
 membridge delta phone.db --out delta.json               # 生成到另一设备的差分包
 membridge apply delta.json                              # 并入差分包
@@ -197,6 +200,34 @@ membridge add "部署到 arm64 会段错误，换 x86 镜像后通过" --kind pr
 
 `--kind procedure` = 「试过什么、结果怎样」；`--kind fact` = 稳定事实。
 纯可选标注，不改变任何默认行为。
+
+#### 交接班约定（`kind=handover`，v0.15）
+
+Agent 的上下文有限，长任务靠反复压缩续命，而压缩是有损的——
+「方案B被否决」或许留下了，「为什么被否决」往往先丢。记忆桥的答案：
+**收工方显式写一张交接卡，完整历史仍由记忆库承载**。
+
+```bash
+membridge add "goal: 修好同步模块
+done: 差分计算已落地
+failed: 全量AST解析；依赖太重；除非放弃零依赖否则别重试
+next: 收敛行前缀解析
+refs: membridge/store.py" --kind handover
+```
+
+- 五行约定 `goal / done / failed / next / refs`，正文原文冻结不改写；
+  `failed` 行用硬句式：**试过什么；因为什么失败；除非什么改变否则别重试**；
+- 新卡自动取代旧卡——最新一张即生效的工作台，旧的自动降级为历史，
+  可检索、可审计，永不删除；
+- 注入时工作台恒定在场（不受沉默契约约束——它是状态声明，不是检索命中），
+  检索命中的其他记忆照常走原契约；
+- 超 7 天未更新的卡不再恒定注入（过期工作台比没有更危险），降级为
+  普通记忆；`membridge doctor` 会提醒；
+- `membridge handoff-hint` 打印常驻提示，粘贴进 CLAUDE.md / AGENTS.md，
+  让宿主 Agent 养成"收工前交接、接班先看工作台"的习惯（软约束，
+  与 recall-hint 同款哲学）。
+
+> 手机侧不需要记命令：网关随身记页面内置交接卡表单，填五行点「交接班」即可。
 
 #### 云盘差分包丢失时的补救
 
@@ -253,11 +284,11 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 }
 ```
 
-可用工具：`memory_add`（Add，可选 `kind` 标注）、`memory_search`（Search，
-三路混合检索；已知记忆在哪可用 `scope` 范围直达，如 `tag:dev`；
-`as_context=true` 直接返回带预算的 Path A 注入块，无高质量
-命中时明确告知本轮不注入）、`memory_preload`（Preload）——严格限定在 UEP
-权限边界内，没有"改写记忆"的工具。
+可用工具：`memory_add`（Add，可选 `kind` 标注：fact / procedure / handover）、
+`memory_search`（Search，三路混合检索；已知记忆在哪可用 `scope` 范围直达，
+如 `tag:dev`；`as_context=true` 直接返回带预算的 Path A 注入块——最新交接卡
+恒定注入在【工作台】小节，无高质量命中时明确告知本轮不注入）、
+`memory_preload`（Preload）——严格限定在 UEP 权限边界内，没有"改写记忆"的工具。
 
 ## 架构一览
 

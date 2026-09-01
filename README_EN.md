@@ -32,10 +32,11 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.14)
+## Status (v0.15)
 
 | Capability | Status |
 |---|---|
+| **Shift handover (handover cards + workbench)** — a third memory kind `kind=handover`: when a task phase ends, the context runs low, or you're about to switch devices, write a handover card (line-prefix convention `goal:/done:/failed:/next:/refs:`; the `failed` line keeps the hard format "tried X; failed because Y; don't retry unless Z"). The newest non-stale card becomes the **workbench**, injected constantly — a state declaration, not a retrieval hit, so it skips relevance ranking and the silence contract; a new card automatically supersedes the old one (supersession is *derived*, zero new state — every device converges on the same card after sync); cards stale >7 days silently demote to ordinary memory (an outdated workbench is worse than none); handover-touched edges get a structural weight decay so a card can't become a super-hub; `membridge handoff` shows the workbench, `membridge handoff-hint` prints a resident reminder, and the pocket-note page ships a five-line card form | ✅ v0.15 |
 | **Typed edges + evidence** — every edge carries a `kind` (semantic / cooccur / entity) plus a tiny `evidence` note, so every link answers "why are these two related?"; existing stores migrate on open (old edges labeled semantic) — structure only, content untouched | ✅ v0.14 |
 | **Entity-anchor edges** — zero-dependency regex extraction of code symbols / file paths / repos / tags as deterministic anchors; memories sharing an anchor get linked — no reliance on literal coincidence, works across mixed Chinese-English phrasing | ✅ v0.14 |
 | **Cluster preload** — `preload --cluster`: union-find splits memory into clusters and preloads the whole cluster around the hottest node — on a new device, the entire task-line context is already in place | ✅ v0.14 |
@@ -181,11 +182,15 @@ CLI:
 membridge init                                      # cloud channel (auto-picked) + passphrase
                                                     # (auto-generated & vaulted) + platform wiring
 membridge add "Working on the MemoryBridge project" --tags dev
-                                                    # optional: --kind fact / procedure
+                                                    # optional: --kind fact / procedure / handover
 membridge search "MemoryBridge" -k 3              # hybrid: vector + keyword + graph, RRF-fused
                                                     # (--scope tag:dev to go straight to a known range)
 membridge context "continue this morning's discussion"
-                                                    # explicit "no injection this turn" on no hit
+                                                    # newest handover card injected constantly in a
+                                                    # 【workbench】 section; explicit "no injection this
+                                                    # turn" only when there is no card and no hit
+membridge handoff                                 # show the current workbench (latest handover card)
+membridge handoff-hint                            # print the resident handover reminder
 membridge preload my-phone
 membridge autosync                                  # runs automatically every 15 min (scheduled task)
 membridge show-passphrase                           # reveal vaulted passphrase when pairing a device

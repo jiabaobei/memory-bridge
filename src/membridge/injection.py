@@ -20,6 +20,7 @@ from __future__ import annotations
 import time
 from typing import Dict, Iterable, List, Optional
 
+from . import handoff
 from .node import MemoryNode
 
 CONFIDENCE_THRESHOLD = 0.3  # 论文中的 θ_c
@@ -40,6 +41,7 @@ def serialize(
     nodes: Iterable[MemoryNode],
     max_chars: int = 1500,
     reasons: Optional[Dict[str, str]] = None,
+    workbench: str = "",
 ) -> str:
     """把高置信记忆节点序列化为自然语言上下文块（显式可审计）。
 
@@ -50,12 +52,27 @@ def serialize(
     reasons（v0.14，可选）：{node_id: "向量+图谱"} 极短命中路径映射，
     追加在条目出处之后——让用户一眼判断"这条为什么被召回、该不该信"。
     不传则不加标注（调用方可按需选择更省 token 的输出）。
+
+    workbench（v0.15，可选）：交接卡工作台文本块（handoff.workbench_block
+    产出）。工作台是**状态声明**而非检索命中，因此享有独立小节与独立预算
+    （注入总额的 1/3，保底 WORKBENCH_BUDGET_MIN），恒定在场、不受沉默契约
+    约束——接班第一眼看交接单，不需要"相关"才看。检索条目仍各守原有
+    契约。超预算的工作台按原文前缀截断（截断 ≠ 改写）。
     """
     eligible = [n for n in nodes if n.confidence >= CONFIDENCE_THRESHOLD]
-    if not eligible:
+    wb = (workbench or "").strip()
+    if not eligible and not wb:
         return SILENCE_NOTE
     lines: List[str] = ["[记忆桥 · 跨设备记忆上下文 开始]"]
     used = 0
+    if wb:
+        wb_budget = max(
+            handoff.WORKBENCH_BUDGET_MIN, int(max_chars * handoff.WORKBENCH_BUDGET_RATIO)
+        )
+        if len(wb) > wb_budget:
+            wb = wb[: max(10, wb_budget - len(_TRUNC_MARK))] + _TRUNC_MARK
+        lines.append(wb)
+        used += len(wb) + 1
     for n in eligible:
         reason = (reasons or {}).get(n.node_id, "")
         line = _fmt_line(n, n.content, reason)

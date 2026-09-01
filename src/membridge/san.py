@@ -39,6 +39,12 @@ _REPO_RE = re.compile(r"\b([A-Za-z0-9_.\-]+)/([A-Za-z0-9_.\-]{2,})\b")
 # 过泛的锚点不建边（否则图会退化成"万物相连"，违背稀疏原则与省 token）
 _ENTITY_MIN_LEN = 3
 
+# v0.15 交接卡边权重衰减：交接卡（kind=handover）正文含大量历史指涉，
+# 若不加抑制会连成超级枢纽、把检索排名抬到压过普通记忆——但工作台槽位
+# 已让最新交接卡恒定注入，交接卡不需要靠边权重获得存在感。衰减只调
+# 结构参数、不碰任何记忆内容；对既有库，全量重建（rebuild-edges）时生效。
+HANDOFF_EDGE_DECAY = 0.85
+
 
 def extract_entities(text: str) -> Set[str]:
     """从原文抽取确定性锚点：文件路径 / 函数名 / 全大写代号 / owner-repo。
@@ -87,12 +93,16 @@ def build_entity_edges(
 
     每节点最多 max_edges 条（按共享锚点数降序），保持图稀疏、
     省存储也省 token；内容冻结：只读原文与标签，不改任何记忆内容。
+    任一端为交接卡（kind=handover）时，权重乘 HANDOFF_EDGE_DECAY——
+    交接卡由工作台槽位恒定注入，不需要靠边权重抬排名（v0.15）。
     """
     ents = _node_entities(node)
     if not ents:
         return []
+    others = store.all_nodes()
+    kind_of = {n.node_id: n.kind for n in others}
     scored: List[Tuple[int, str, List[str]]] = []
-    for other in store.all_nodes():
+    for other in others:
         if other.node_id == node.node_id:
             continue
         shared = ents & _node_entities(other)
@@ -105,6 +115,8 @@ def build_entity_edges(
     for nshared, other_id, sample in scored[:max_edges]:
         src, dst = _ordered(node.node_id, other_id)
         weight = round(min(0.95, base_weight + 0.05 * (nshared - 1)), 4)
+        if node.kind == "handover" or kind_of.get(other_id) == "handover":
+            weight = round(weight * HANDOFF_EDGE_DECAY, 4)
         evidence = "ent:" + ",".join(sample)
         if store.edge_weight(src, dst) == weight:
             continue  # 幂等：同权重不重写
@@ -170,6 +182,8 @@ def build_edges(
             continue
         weight = round(w, 4)
         src, dst = _ordered(a.node_id, b.node_id)
+        if a.kind == "handover" or b.kind == "handover":
+            weight = round(weight * HANDOFF_EDGE_DECAY, 4)
         if store.edge_weight(src, dst) == weight:
             continue  # 已存在且权重未变：不重写（幂等，写放大归零）
         # 共现主导（字面重叠高但语义向量不相似）单独标注，

@@ -82,6 +82,15 @@ _PAGE = """<!DOCTYPE html>
 <textarea id="text" rows="3" placeholder="要记住的一件事（一句话一条最准）"></textarea>
 <button onclick="add()">记一笔</button>
 <hr>
+<textarea id="ho" rows="6" placeholder="交接卡（收工前填，新卡自动取代旧卡）
+goal: 当前目标
+done: 已完成
+failed: 试过什么；因为什么失败；除非什么否则别重试
+next: 下一步
+refs: 相关文件/符号"></textarea>
+<button onclick="handoff()">交接班</button>
+<button onclick="workbench()">看工作台</button>
+<hr>
 <input id="query" placeholder="想找的记忆…">
 <button onclick="search()">找记忆</button>
 <pre id="out"></pre>
@@ -122,6 +131,13 @@ async function status() {
 function add() {
   const t = document.getElementById("text").value.trim();
   if (t) call("/add", { text: t });
+}
+function handoff() {
+  const t = document.getElementById("ho").value.trim();
+  if (t) call("/add", { text: t, kind: "handover" });
+}
+function workbench() {
+  call("/workbench", {});
 }
 function search() {
   const q = document.getElementById("query").value.trim();
@@ -236,7 +252,7 @@ def create_gateway_server(
                     scene=classify_scene(text),
                     device=store.device_name,
                     migration=migration or default_migration(text),
-                    kind=kind if kind in ("fact", "procedure") else "",
+                    kind=kind if kind in ("fact", "procedure", "handover") else "",
                 )
                 with store.transaction():
                     store.add(node)
@@ -255,10 +271,16 @@ def create_gateway_server(
                 stats["searches"] += 1
                 stats["hits"] += len(hits)
                 if data.get("as_context"):
+                    from .handoff import workbench, workbench_block
                     from .injection import serialize
 
+                    active = workbench(store)
+                    nodes = (n for n, _ in hits
+                             if not (active and n.node_id == active.node_id))
                     self._send(200, {"ok": True,
-                                     "context": serialize((n for n, _ in hits))})
+                                     "context": serialize(
+                                         nodes,
+                                         workbench=workbench_block(store))})
                     return
                 self._send(200, {"ok": True, "hits": [
                     {"content": n.content, "score": round(s, 4), "kind": n.kind,
@@ -271,6 +293,20 @@ def create_gateway_server(
                                            k=int(data.get("k") or 8))
                 self._send(200, {"ok": True,
                                  "candidates": [n.content for n in cands]})
+                return
+            if path == "/workbench":
+                # 只读槽位（v0.15）：最新未过期交接卡；无卡/过期返回空，
+                # 不硬凑——过期工作台比没有工作台更危险
+                from .handoff import latest_handoff, workbench_block
+
+                block = workbench_block(store)
+                if block:
+                    self._send(200, {"ok": True, "message": block})
+                else:
+                    latest = latest_handoff(store)
+                    msg = ("（暂无生效的交接卡——过期卡已降级为普通记忆）"
+                           if latest else "（还没有交接卡：用「交接班」写一张）")
+                    self._send(200, {"ok": True, "message": msg})
                 return
             self._send(404, {"error": "not_found", "message": "未知路径"})
 

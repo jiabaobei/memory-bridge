@@ -93,7 +93,12 @@ def preload_cluster(
     与 preload_candidates（全局热度 Top-K）互补：全局热度给"最近常用的
     零散记忆"，整簇给"当前这条任务线上的完整上下文"——对应论文预加载
     主张的"切换即连续"：到新设备，整条任务线的记忆都已就位。
+
+    v0.15：最新未过期交接卡若不在簇内（任务线刚开了新卡），把它顶到
+    首位一起预加载——交接物先于记忆到位，接班才有"看交接单"的入口。
     """
+    from .handoff import workbench
+
     groups = clusters(store)
     nodes = [n for n in store.all_nodes() if allowed(n)]
     if not nodes:
@@ -101,7 +106,12 @@ def preload_cluster(
     hottest = max(nodes, key=heat)
     cid = groups.get(hottest.node_id)
     if cid is None:  # 无边 → 该节点自成一簇
-        return [hottest][:k]
-    same = [n for n in nodes if groups.get(n.node_id) == cid]
-    same.sort(key=heat, reverse=True)
+        same = [hottest]
+    else:
+        same = [n for n in nodes if groups.get(n.node_id) == cid]
+        same.sort(key=heat, reverse=True)
+    card = workbench(store)
+    if card is not None and allowed(card) and \
+            all(n.node_id != card.node_id for n in same):
+        same.insert(0, card)
     return same[:k]

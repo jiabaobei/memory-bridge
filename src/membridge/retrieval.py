@@ -30,7 +30,7 @@ def scope_allowed(scope: str):
     """解析范围直达参数（v0.13.1，借鉴 Context7「已知目标直达」）。
 
     调用方已知道记忆在哪个范围时，先按范围过滤再融合——跳过无关候选，
-    更准、更省。支持 `tag:<名>` / `scene:<名>` / `kind:<fact|procedure>`。
+    更准、更省。支持 `tag:<名>` / `scene:<名>` / `kind:<fact|procedure|handover>`。
     空串或无法解析（未知字段、缺值）返回 None = 不过滤，行为与之前完全一致。
     只读过滤元数据，不触碰记忆内容。
     """

@@ -86,6 +86,8 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_context(args: argparse.Namespace) -> int:
+    from .handoff import workbench_block
+
     store = _open_store(args)
     hits = retrieval.search_with_reasons(
         store, capabilities.best_embedder(), args.query,
@@ -93,7 +95,54 @@ def cmd_context(args: argparse.Namespace) -> int:
     )
     # v0.14：注入时标注极短召回理由，便于判断该不该信这条记忆
     reasons = {n.node_id: why for n, _, why in hits}
-    print(injection.serialize((n for n, _, _ in hits), reasons=reasons))
+    # v0.15：工作台恒定注入——交接卡是状态声明，不走相关性检索；
+    # 工作台已含最新交接卡，检索命中里去重避免同一条出现两次
+    from .handoff import workbench, workbench_block
+
+    wb = workbench_block(store)
+    active = workbench(store)
+    nodes = [n for n, _, _ in hits
+             if not (active and n.node_id == active.node_id)]
+    print(injection.serialize(nodes, reasons=reasons, workbench=wb))
+    return 0
+
+
+def cmd_handoff(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """查看当前工作台：最新交接卡的原文与生效状态（取代是推导出来的）。"""
+    from .handoff import (HANDOFF_STALE_HOURS, age_hours, latest_handoff,
+                          summary, TEMPLATE)
+
+    store = _open_store(args)
+    card = latest_handoff(store)
+    if card is None:
+        print("还没有交接卡——任务告一段落、上下文将满、或要切换设备前，"
+              "把这一阶段写成一张：")
+        print()
+        print(f'membridge add "{TEMPLATE}" --kind handover')
+        print()
+        print("新卡自动取代旧卡；交接卡的正文永远保持原文，不会被改写。")
+        return 0
+    hours = age_hours(card)
+    if hours > HANDOFF_STALE_HOURS:
+        print(f"⚠️ 最新交接卡已过期（{hours / 24:.0f} 天前，来自 {card.device}）"
+              "——过期工作台不再恒定注入，只走检索：")
+    else:
+        print(f"当前工作台（{hours:.1f} 小时前，来自 {card.device}）：")
+    print()
+    print(card.content)
+    print()
+    print(f"摘要：{summary(card)}")
+    return 0
+
+
+def cmd_handoff_hint(args: argparse.Namespace) -> int:  # noqa: ARG001
+    """打印可粘贴进宿主指令文件的常驻交接提示（自愿启用，本工具不代写）。"""
+    from .handoff import handoff_hint
+
+    print("把下面这一段，粘贴进你 AI 助手的常驻指令文件即可：")
+    print("（Claude Code → CLAUDE.md；Codex / 通用 → AGENTS.md；Cursor → 规则文件）")
+    print()
+    print(handoff_hint())
     return 0
 
 
@@ -504,8 +553,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--tags", default="", help="逗号分隔标签")
     p.add_argument("--scene", default=None, help="场景域（默认自动分类）")
     p.add_argument("--migration", default=None, help="迁移标签 local/edge/cloud（默认自动判定）")
-    p.add_argument("--kind", default="", choices=["", "fact", "procedure"],
-                   help="可选标注：fact 稳定事实 / procedure 试过什么、结果（默认不标注）")
+    p.add_argument("--kind", default="", choices=["", "fact", "procedure", "handover"],
+                   help="可选标注：fact 稳定事实 / procedure 试过什么、结果 / "
+                        "handover 交接卡（goal/done/failed/next/refs 行前缀约定）")
     p.set_defaults(func=cmd_add)
 
     p = sub.add_parser("search", help="语义检索记忆")
@@ -513,7 +563,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("-k", type=int, default=5)
     p.add_argument("--scope", default="",
                    help="可选范围直达：已知记忆在哪时先过滤再检索"
-                        "（如 tag:dev / scene:work / kind:procedure）")
+                        "（如 tag:dev / scene:work / kind:procedure / kind:handover）")
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("context", help="输出 Path A 记忆上下文块")
@@ -571,6 +621,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("recall-hint",
                        help="打印常驻召回提示（粘贴进 CLAUDE.md / AGENTS.md，自愿启用）")
     p.set_defaults(func=cmd_recall_hint)
+
+    p = sub.add_parser("handoff",
+                       help="查看当前工作台：最新交接卡原文与生效状态（v0.15）")
+    p.set_defaults(func=cmd_handoff)
+
+    p = sub.add_parser("handoff-hint",
+                       help="打印常驻交接提示（粘贴进 CLAUDE.md / AGENTS.md，自愿启用）")
+    p.set_defaults(func=cmd_handoff_hint)
 
     p = sub.add_parser(
         "rebuild-edges",
