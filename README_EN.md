@@ -221,6 +221,41 @@ membridge add "arm64 deploys segfault; switching to the x86 image fixed it" --ki
 `--kind procedure` = "what was tried, what happened"; `--kind fact` = stable
 facts. Strictly optional — defaults are unchanged.
 
+**Shift-handover convention (`kind=handover`, v0.15).** An agent's context is
+finite, and long tasks survive by repeated compaction — which is lossy: "option
+B was rejected" may survive the summary, but "why it was rejected" is usually
+the first thing lost. MemoryBridge's answer: **the outgoing side writes one
+handover card explicitly; the full history stays in the store, queryable at
+any time.**
+
+```bash
+membridge add "goal: fix the sync module
+done: delta computation landed
+failed: full AST parsing; deps too heavy; don't retry unless we drop zero-deps
+next: converge the line-prefix parser
+refs: membridge/store.py" --kind handover
+```
+
+- Five-line convention `goal / done / failed / next / refs`; the card body is
+  content-frozen; the `failed` line keeps the hard format: **tried X; failed
+  because Y; don't retry unless Z changes**;
+- A new card automatically supersedes the old one — the newest card *is* the
+  workbench, older ones demote to history, still searchable and auditable,
+  never deleted;
+- At injection time the workbench is constantly present (it is a state
+  declaration, not a retrieval hit, so the silence contract does not apply);
+  all other retrieved memories keep their original contract;
+- Cards stale >7 days stop being injected constantly (an outdated workbench is
+  worse than none) and demote to ordinary memory; `membridge doctor` reminds
+  you;
+- `membridge handoff-hint` prints a resident reminder to paste into
+  CLAUDE.md / AGENTS.md, so the host agent builds the habit of "hand over
+  before you leave, read the workbench first when you arrive" (a soft
+  contract, same philosophy as recall-hint).
+
+> Phones don't need the command: the gateway pocket-note page ships a
+> five-line handover form — fill it in, tap "交接班", done.
+
 **Recovering a lost channel.** `publish` only sends memories that are not yet marked
 as published locally. If the delta packets are deleted on the cloud side (or a sync
 failure empties the channel), the local record still says "published", so a plain
@@ -268,12 +303,13 @@ MCP clients (Cursor `mcp.json`):
 }
 ```
 
-Tools exposed: `memory_add` (optional `kind` tag), `memory_search` (hybrid
-three-route retrieval; optional `scope` for direct access to a known range,
-e.g. `tag:dev`; `as_context=true` returns a budgeted Path A injection
-block and explicitly reports "no intervention" when nothing passes the quality
-bar), `memory_preload` — strictly limited to the UEP permission boundary; there
-is no "rewrite memory" tool.
+Tools exposed: `memory_add` (optional `kind` tag: fact / procedure / handover),
+`memory_search` (hybrid three-route retrieval; optional `scope` for direct
+access to a known range, e.g. `tag:dev`; `as_context=true` returns a budgeted
+Path A injection block — the newest handover card is injected constantly in a
+workbench section — and explicitly reports "no intervention" when there is no
+card and nothing passes the quality bar), `memory_preload` — strictly limited
+to the UEP permission boundary; there is no "rewrite memory" tool.
 
 ## Relationship to the paper
 
