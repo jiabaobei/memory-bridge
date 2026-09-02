@@ -7,6 +7,7 @@ CDSMP（Cross-Device Semantic Memory Persistence，大模型跨设备语义记�
     distillation san.SAN        语义关联网络（简化版）
     caching      heat.TMT       热度与预加载候选（v0 启发式）
     sync         dss.DSS        增量语义同步（本地差分，E2E 传输见 Phase 2）
+    container    schema         跨端容器一致性：清单自述/指纹/对账补列（v0.15）
     injection    injection.PathA 显式上下文拼接（Path B 在 experimental 分支）
     privacy      privacy.PAMS   L1/L2 门控（L3 差分隐私按约定后置）
     feedback     AEE            自适应进化引擎（Phase 4）
@@ -19,9 +20,10 @@ from .node import MemoryNode
 from .store import MemoryStore
 from .san import build_edges, build_entity_edges, extract_entities
 from .retrieval import hybrid_search, search_with_reasons
-from . import capabilities, clients, dss, handoff, heat, injection, privacy, sync_agent, transport, vault
+from . import (capabilities, clients, dss, handoff, heat, injection,
+               privacy, schema, sync_agent, transport, vault)
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"
 
 __all__ = [
     "MemoryNode",
@@ -42,5 +44,6 @@ __all__ = [
     "heat",
     "injection",
     "privacy",
+    "schema",
     "transport",
 ]

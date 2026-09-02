@@ -3,7 +3,7 @@
 > 🌉 **Give your AI a memory that follows you** — a cross-device × cross-platform shared memory layer.
 >
 > The official engineering implementation of CDSMP (Cross-Device Semantic Memory Persistence).
-> [中文文档](README.md) · [Design RFC](docs/RFC-001-architecture.md) · [Roadmap](docs/roadmap.md) · [Mobile guide](docs/mobile.md) · [Threat model](docs/threat-model.md) · [Changelog](CHANGELOG.md)
+> [中文文档](README.md) · [Design RFC](docs/RFC-001-architecture.md) · [Container consistency RFC](docs/RFC-002-container-consistency.md) · [Roadmap](docs/roadmap.md) · [Mobile guide](docs/mobile.md) · [Threat model](docs/threat-model.md) · [Changelog](CHANGELOG.md)
 
 ![Version](https://img.shields.io/github/v/release/jiabaobei/memory-bridge)
 
@@ -32,10 +32,13 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.15)
+## Status (v0.16)
 
 | Capability | Status |
 |---|---|
+| **Container consistency (declarable, reconcilable schema across ends)** — a container manifest (`schema.py`) reads the local store and emits a device identity card (schema version / node+edge fields / kind enum / storage planes / migration registry); `membridge schema` shows the local card, `--peer` reconciles against any remote card in both directions, auto-ALTERs missing columns via the migration registry; deltas now carry an `edges_v2` 5-tuple (src, dst, weight, kind, evidence) reconciled before apply — **v0.14's typed edges no longer degrade across devices** | ✅ v0.16 |
+| **Storage-plane declaration (inspired by mem0)** — manifest declares graph (edges) / vector (nodes.embedding) / kv (meta) planes, read from the actual table structure; a missing plane changes the fingerprint and shows up in `doctor` | ✅ v0.16 |
+| **Seq version negotiation (inspired by rig)** — outbound deltas get a monotonically increasing `seq`; receivers track a per-device `sync_watermark` (monotonic), duplicate/out-of-order packets converge idempotently via content-fingerprint dedup | ✅ v0.16 |
 | **Shift handover (handover cards + workbench)** — a third memory kind `kind=handover`: when a task phase ends, the context runs low, or you're about to switch devices, write a handover card (line-prefix convention `goal:/done:/failed:/next:/refs:`; the `failed` line keeps the hard format "tried X; failed because Y; don't retry unless Z"). The newest non-stale card becomes the **workbench**, injected constantly — a state declaration, not a retrieval hit, so it skips relevance ranking and the silence contract; a new card automatically supersedes the old one (supersession is *derived*, zero new state — every device converges on the same card after sync); cards stale >7 days silently demote to ordinary memory (an outdated workbench is worse than none); handover-touched edges get a structural weight decay so a card can't become a super-hub; `membridge handoff` shows the workbench, `membridge handoff-hint` prints a resident reminder, and the pocket-note page ships a five-line card form | ✅ v0.15 |
 | **Typed edges + evidence** — every edge carries a `kind` (semantic / cooccur / entity) plus a tiny `evidence` note, so every link answers "why are these two related?"; existing stores migrate on open (old edges labeled semantic) — structure only, content untouched | ✅ v0.14 |
 | **Entity-anchor edges** — zero-dependency regex extraction of code symbols / file paths / repos / tags as deterministic anchors; memories sharing an anchor get linked — no reliance on literal coincidence, works across mixed Chinese-English phrasing | ✅ v0.14 |

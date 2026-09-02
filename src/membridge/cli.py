@@ -315,6 +315,66 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_schema(args: argparse.Namespace) -> int:
+    """容器一致性体检（v0.16）：本端容器清单 / 指纹 / 与对端对账。
+
+    v0.13 只统一了「通道指向哪个云盘」，没统一「容器长什么样」，于是各端
+    SQLite 字段与边类型各写各的。本命令把本端容器自述出来，并支持与对端
+    导出的清单对账——指纹相同即容器一致。
+    """
+    import json as _json
+
+    from . import schema as _schema
+
+    store = _open_store(args)
+    m = _schema.local_manifest(store)
+    if getattr(args, "json", False):
+        print(_json.dumps(m, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"本端设备: {m['device']}")
+    print(f"容器版本: {m['schema_version']}")
+    print(f"容器指纹: {_schema.manifest_fp(m)}")
+    print(f"节点字段 ({len(m['node_fields'])}): {', '.join(m['node_fields'])}")
+    print(f"边字段 ({len(m['edge_fields'])}): {', '.join(m['edge_fields'])}")
+    print(f"边类型枚举: {', '.join(m['kind_enum'])}")
+
+    peer = getattr(args, "peer", None)
+    if not peer:
+        print("\n跨端比对：在另一端运行 membridge schema --json > peer.json，"
+              "带回本端后用 --peer peer.json 对账。")
+        return 0
+
+    if not os.path.isfile(peer):
+        print(f"⚠️ 对端清单文件不存在: {peer}")
+        return 2
+    with open(peer, encoding="utf-8") as f:
+        remote = _json.load(f)
+
+    lfp, rfp = _schema.manifest_fp(m), _schema.manifest_fp(remote)
+    if lfp == rfp:
+        print(f"\n✅ 与对端容器一致（指纹 {lfp}）")
+        return 0
+
+    # 双向对账：d 是对端更全（本端待补齐），rev 是本端更全（对端待升级）
+    d = _schema.diff_manifest(m, remote)
+    rev = _schema.diff_manifest(remote, m)
+    print(f"\n⚠️ 与对端容器不一致（本端 {lfp} / 对端 {rfp}）")
+    for label, dd in (("本端", d), ("对端", rev)):
+        gaps = []
+        if dd["missing_node_fields"]:
+            gaps.append(f"节点字段 {', '.join(dd['missing_node_fields'])}")
+        if dd["missing_edge_fields"]:
+            gaps.append(f"边字段 {', '.join(dd['missing_edge_fields'])}")
+        if dd["missing_kinds"]:
+            gaps.append(f"边类型 {', '.join(dd['missing_kinds'])}")
+        if gaps:
+            print(f"  {label}缺: " + "；".join(gaps))
+    print("  处理：落后的一端 fetch 领先端的差分包时会自动对账补齐；"
+          "若字段无迁移登记，则该端需升级记忆桥。")
+    return 1
+
+
 def cmd_channel(args: argparse.Namespace) -> int:  # noqa: ARG001
     """通道一致性体检（v0.13）：本机通道 / 通道身份证 / 通道内设备是否同一个。"""
     from . import channel
@@ -612,6 +672,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("channel",
                        help="通道一致性体检：本机与其他设备是否指向同一个云盘通道（v0.13）")
     p.set_defaults(func=cmd_channel)
+
+    p = sub.add_parser(
+        "schema",
+        help="容器一致性体检：本端容器清单 / 指纹 / 与对端对账（v0.16）",
+    )
+    p.add_argument("--json", action="store_true",
+                   help="以 JSON 输出本端容器清单（供另一端 --peer 对账）")
+    p.add_argument("--peer", default=None, help="对账另一端导出的容器清单 JSON 文件")
+    p.set_defaults(func=cmd_schema)
 
     p = sub.add_parser("export", help="导出人类可读的 Markdown 视图（只读，不回写）")
     p.add_argument("--out", default=None, help="输出 .md 文件路径（默认打印到屏幕）")

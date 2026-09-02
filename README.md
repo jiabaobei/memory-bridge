@@ -3,7 +3,7 @@
 > 🌉 **给 AI 一个跟着你走的记忆** —— 跨设备 × 跨平台的共享记忆层
 >
 > CDSMP（大模型跨设备语义记忆连续性架构）的官方工程实现。
-> [English](README_EN.md) · [设计 RFC](docs/RFC-001-architecture.md) · [路线图](docs/roadmap.md) · [移动端接入](docs/mobile.md) · [隐私威胁模型](docs/threat-model.md) · [版本历程](CHANGELOG.md)
+> [English](README_EN.md) · [设计 RFC](docs/RFC-001-architecture.md) · [容器一致性 RFC](docs/RFC-002-container-consistency.md) · [路线图](docs/roadmap.md) · [移动端接入](docs/mobile.md) · [隐私威胁模型](docs/threat-model.md) · [版本历程](CHANGELOG.md)
 
 ![Version](https://img.shields.io/github/v/release/jiabaobei/memory-bridge)
 ![CI](https://github.com/jiabaobei/memory-bridge/actions/workflows/ci.yml/badge.svg)
@@ -25,10 +25,13 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.15）
+## 当前能力（v0.16）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
+| 容器一致性（各端 schema 可声明可对账） | 容器清单 `schema.py` 实读库结构生成本端身份证（schema 版本 / 节点边字段 / 边类型枚举 / 三存储平面 / 迁移登记）；`membridge schema` 查看本端、`--peer` 与对端双向对账，缺列按迁移登记自动 ALTER 补齐；差分包携带 `edges_v2` 五元组（含 kind/evidence）随包对账——**v0.14 的类型化边跨端往返不再退化** | ✅ v0.16 |
+| 三存储平面声明（mem0 借鉴） | manifest 声明 graph（edges）/ vector（nodes.embedding）/ kv（meta）三平面，实读表结构判定，缺平面即指纹不同、体检可查 | ✅ v0.16 |
+| seq 版本协商（rig 借鉴） | 发包 seq 单调递增，接收端按设备记 `sync_watermark` 水位线（只增不减），重复/乱序包内容指纹去重天然幂等 | ✅ v0.16 |
 | 交接班（交接卡 + 工作台） | 第三种记忆类型 `kind=handover`：任务告一段落、上下文将满、或切换设备前写一张交接卡（`goal:/done:/failed:/next:/refs:` 行前缀约定；`failed` 行用硬句式留下「试过什么；因为什么；除非什么否则别重试」）。全库最新未过期交接卡成为**工作台**：注入时恒定在场、不走相关性检索——交接卡是状态声明，不是检索命中；新卡自动取代旧卡（取代是推导出来的，零新增状态位，跨设备同步后各端自动收敛到同一张卡）；超 7 天未更新自动降级为普通记忆（过期工作台比没有更危险）；交接卡触点边权重结构衰减，防止其连成超级枢纽抬排名；`membridge handoff` 查看工作台，`membridge handoff-hint` 打印常驻交接提示，随身记页面内置交接卡表单 | ✅ v0.15 |
 | 类型化边 + 证据 | 边带 `kind`（semantic / cooccur / entity）+ 极短 `evidence`——每条边可回答「为什么相关」；存量库打开自动迁移（旧边标 semantic），只加结构不碰内容 | ✅ v0.14 |
 | 实体锚点边 | 零依赖正则抽取代码符号 / 文件路径 / 仓库 / 标签为确定性锚点，共享同一锚点即连边——不靠字面巧合，中英混写也能连上 | ✅ v0.14 |

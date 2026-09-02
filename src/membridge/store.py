@@ -246,6 +246,18 @@ class MemoryStore:
         rows = self.conn.execute("SELECT src, dst, weight FROM edges").fetchall()
         return [(r[0], r[1], r[2]) for r in rows]
 
+    def all_edges_full(self) -> List[Tuple[str, str, float, str, str]]:
+        """v0.15：取 (src, dst, weight, kind, evidence) 五元组。
+
+        供 DSS 差分携带边类型。v0.14 的 all_edges() 只返回三元组，
+        使类型化边跨设备即退化成默认——这正是「路通了、容器不一致」的根因。
+        老库尚无 kind/evidence 列时由 _migrate_columns 保证列存在。
+        """
+        rows = self.conn.execute(
+            "SELECT src, dst, weight, kind, evidence FROM edges"
+        ).fetchall()
+        return [(r[0], r[1], r[2], r[3] or "", r[4] or "") for r in rows]
+
     def count_edges(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
 

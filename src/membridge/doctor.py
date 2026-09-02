@@ -72,6 +72,12 @@ def run_doctor(out=print) -> int:
 
         s = MemoryStore(db)
         out(f"  ✅ 可用（{s.count_nodes()} 条记忆，{s.count_edges()} 条关联，设备 {s.device_name}）")
+        # v0.16 容器一致性自检（RFC-002）：本端容器自述 + 指纹
+        from . import schema as _schema
+
+        m = _schema.local_manifest(s)
+        out(f"  🧩 容器指纹: {_schema.manifest_fp(m)} (schema {m['schema_version']}；"
+            f"节点 {len(m['node_fields'])} 字段 / 边 {len(m['edge_fields'])} 字段)")
         if s.device_name == "unknown":
             warnings.append("设备名未设置（记忆来源无法标注）——运行 membridge init 或 --device 设置")
         if s.netdisk:
