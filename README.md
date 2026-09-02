@@ -366,7 +366,7 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 
 - **Phase 0 ✅** 仓库与骨架、核心引擎 v0（SAN + Path A + DSS 本地差分 + PAMS L1/L2）、MCP Server
 - **Phase 1 🔄** `membridge init` 一键接入 + doctor 自检 + WorkBuddy 技能 + 远程 MCP 已完成（v0.2）；待办：PyPI 发布、真实 embedding 后端、TS SDK
-- **Phase 2** 跨设备传输通道：E2E 加密中继（自托管）、版本向量、冲突解决
+- **Phase 2** 跨设备传输通道：网盘三端直达已完成（v0.18–v0.20，双网盘主备分明，详见路线图）；待办：E2E 加密中继（自托管）、版本向量、冲突解决
 - **Phase 3** TMT 边缘驻留（hot/cold 两级）、预加载时机、移动端原生壳（网关已先行，v0.11）、L2 授权流
 - **Phase 4** AEE 自适应进化（α / π_nav / θ_window）、Path B experimental 分支、L3 差分隐私、UEP 评测复现脚本
 
