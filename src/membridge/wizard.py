@@ -40,12 +40,22 @@ SYNC_DRIVE_CANDIDATES: List[Tuple[str, Tuple[str, ...]]] = [
 FREE_CLOUD_GUIDE = (
     "   未检测到同步盘。任选一款免费云盘即可（按论文 §4.5 测算：单用户记忆一年仅约\n"
     "   1GB、日写入约 5MB，任何免费额度都绰绰有余）：\n"
-    "     1) 坚果云（推荐，专为文件夹同步设计）https://www.jianguoyun.com\n"
-    "     2) OneDrive（Windows 自带 5GB）https://onedrive.live.com\n"
-    "     3) 百度网盘同步空间 https://pan.baidu.com\n"
+    "     1) 坚果云（推荐主通道，全端可达：WebDAV 让网页端容器也能接）https://www.jianguoyun.com\n"
+    "     2) OneDrive（Windows 自带 5GB；仅本机桌面客户端可达，适合当备胎）https://onedrive.live.com\n"
+    "     3) 百度网盘同步空间（仅本机桌面客户端可达）https://pan.baidu.com\n"
     "   安装并登录后重跑 membridge init 即可自动识别。\n"
     "   ⚠️ 只同步差分包（outbox/），不要把记忆库 .db 文件放进同步文件夹。"
 )
+
+# 各网盘可达性（v0.20 文案）：决定网页端容器 / 手机平板端能不能到达这个通道宿主
+REACHABILITY = {
+    "坚果云": "全端可达（WebDAV）",
+    "OneDrive": "仅本机桌面客户端可达",
+    "百度网盘同步盘": "仅本机桌面客户端可达",
+    "iCloud 云盘": "仅本机桌面客户端可达",
+    "Dropbox": "仅本机桌面客户端可达",
+    "Google Drive": "仅本机桌面客户端可达",
+}
 
 # 测试可注入的 HOME 覆盖（None = 真实用户目录）
 HOME_DIR: Optional[Path] = None
@@ -117,18 +127,21 @@ def run_init(opts: InitOptions, out=print) -> int:
         found = detect_sync_roots()
         if found:
             netdisk = str(Path(found[0][1]) / "membridge")
-            alts = "、".join(n for n, _ in found[1:])
-            out(f"   ☁️ 自动选定：{found[0][0]} → {netdisk}" + (f"（检测到备选：{alts}，可用 --netdisk-dir 覆盖）" if alts else ""))
+            reach = REACHABILITY.get(found[0][0], "")
+            alts = "、".join(
+                f"{n}（{REACHABILITY.get(n, '可达性未知')}）" for n, _ in found[1:])
+            out(f"   ☁️ 自动选定：{found[0][0]}（{reach or '可达性未知'}）→ {netdisk}"
+                + (f"（检测到备选：{alts}，可用 --netdisk-dir 覆盖）" if alts else ""))
         else:
             skipped = True
             out(FREE_CLOUD_GUIDE)
-    # 双网盘建议（v0.19）：一家主通道 + 一家共享桥，把网页端容器拉进三端闭环
-    out("   🌐 双网盘建议：建议两家都配——OneDrive 作主通道（大多数情况），"
-        "坚果云作共享桥（兼顾网页端 / 手机平板端与 PC 端的记忆共享）。")
+    # 双网盘建议（v0.19 引入；v0.20 主备分明）：坚果云主通道 + OneDrive 备胎
+    out("   🌐 双网盘建议：保持一条主通道——坚果云（WebDAV，全端可达，网页端 / "
+        "手机平板 / PC 都能到达）；OneDrive 作备胎（坚果云出问题时顶上，不是淘汰）。")
     out("      网页端 AI 容器两家都能接：")
-    out("      · OneDrive：membridge netdisk-connect --dir <通道目录>（三步：装同步工具 → 授权 → 拉取）")
-    out("      · 坚果云：  membridge netdisk-connect --provider jianguoyun --dir <通道目录>"
+    out("      · 坚果云（主）：membridge netdisk-connect --provider jianguoyun --dir <通道目录>"
         " --webdav-user <账号> --webdav-pass <应用密码>")
+    out("      · OneDrive（备）：membridge netdisk-connect --dir <通道目录>（三步：装同步工具 → 授权 → 拉取）")
 
     # ── 第二步：记忆库位置 ────────────────────────────────────────
     db = opts.db or default_db_path()

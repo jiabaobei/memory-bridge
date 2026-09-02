@@ -269,3 +269,49 @@ def test_show_passphrase_masked_by_default():
     else:
         assert "指纹" in out and "--reveal" in out
     a.close()
+
+
+# ---------------- v0.20：通道迁移 --move + 宿主可达性提示 ----------------
+
+def test_channel_cli_move_copies_and_repoints():
+    """channel --move：通道文件复制到新目录 + 本机改指向；身份证随文件走不改写。"""
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    a = _store(DEV1)
+    _remember(a, COFFEE)
+    FolderTransport(root, a).publish(plaintext=True)
+    a.set_netdisk(root)
+    channel_id = a.channel_id
+    db_path = a._tmp.name + "/mem.db"
+    a.close()
+
+    new_root = tempfile.mkdtemp(prefix="membridge-moved-")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cli.cmd_channel(type("A", (), {"db": db_path, "device": None,
+                                            "move": new_root})())
+    out = buf.getvalue()
+    assert rc == 0 and "通道已迁移" in out
+    assert os.path.exists(os.path.join(new_root, "channel.json"))
+    manifest = channel.read_manifest(new_root)
+    assert manifest and manifest["channel_id"] == channel_id  # 身份不改写
+    reopened = MemoryStore(db_path)
+    assert reopened.netdisk == new_root
+    reopened.close()
+
+
+def test_channel_cli_warns_desktop_only_host():
+    """v0.20 可达性：宿主是 OneDrive/iCloud 时提示容器/网页端不可达。"""
+    base = tempfile.mkdtemp(prefix="membridge-")
+    root = os.path.join(base, "OneDrive", "membridge")
+    os.makedirs(root)
+    a = _store(DEV1)
+    _remember(a, COFFEE)
+    FolderTransport(root, a).publish(plaintext=True)
+    a.set_netdisk(root)
+    db_path = a._tmp.name + "/mem.db"
+    a.close()
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cli.cmd_channel(type("A", (), {"db": db_path, "device": None})())
+    assert rc == 0 and "不可达" in buf.getvalue()

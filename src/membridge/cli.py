@@ -366,10 +366,15 @@ def _netdisk_round(args: argparse.Namespace) -> bool:
         print("网盘未接线：先跑 membridge netdisk-connect --dir <本目录> 完成三步接线")
         return False
     ok_all = True
-    for provider, conf in state.items():
+    # 主通道先跑（v0.20）：primary 在前，备胎殿后
+    ordered = sorted(state.items(),
+                     key=lambda kv: 0 if kv[1].get("role") == "primary" else 1)
+    for provider, conf in ordered:
         ok, detail = netdisk_sync.bisync(
             args.dir, conf["remote_path"], provider=provider)
-        print(f"网盘双向：{detail}")
+        role = conf.get("role", "")
+        print(f"网盘双向{'（主通道）' if role == 'primary' else '（备胎）' if role == 'backup' else ''}："
+              f"{detail}")
         ok_all = ok_all and ok
     return ok_all
 
@@ -395,7 +400,9 @@ def cmd_netdisk_status(args: argparse.Namespace) -> int:
     state = _load_netdisk_state(args.dir) if args.dir else None
     if state:
         for provider, conf in state.items():
-            print(f"本机接线状态：{provider} 已接线 → {conf['remote_path']}")
+            role = conf.get("role", "")
+            role_txt = f"，{'主通道' if role == 'primary' else '备胎'}" if role else ""
+            print(f"本机接线状态：{provider} 已接线 → {conf['remote_path']}{role_txt}")
     else:
         print("本机接线状态：未接线")
     return 0
@@ -424,14 +431,18 @@ def cmd_netdisk_connect(args: argparse.Namespace) -> int:
     if result["stage"] == "done":
         path = _netdisk_state_path(args.dir)
         state = _load_netdisk_state(args.dir) or {}
+        # 主备分明（v0.20）：缺省坚果云=主通道，OneDrive=备胎（顶上用，不是淘汰）
+        role = args.role or ("primary" if args.provider == "jianguoyun" else "backup")
         state[args.provider] = {
             "remote_path": result.get("resolved_dir", args.remote),
             "local_dir": args.dir,
+            "role": role,
         }
         path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         store = _open_store(args)
         store.set_netdisk(args.dir)
-        print(f"接线完成（{args.provider}）：以后跑 membridge sync --netdisk 即三端自动双向")
+        print(f"接线完成（{args.provider}，{'主通道' if role == 'primary' else '备胎'}）："
+              "以后跑 membridge sync --netdisk 即三端自动双向")
         return 0
     return 1 if result["stage"] not in ("need-token", "need-credential") else 0
 
@@ -548,12 +559,40 @@ def cmd_schema(args: argparse.Namespace) -> int:
     return 1
 
 
-def cmd_channel(args: argparse.Namespace) -> int:  # noqa: ARG001
-    """通道一致性体检（v0.13）：本机通道 / 通道身份证 / 通道内设备是否同一个。"""
+def cmd_channel(args: argparse.Namespace) -> int:
+    """通道一致性体检（v0.13）：本机通道 / 通道身份证 / 通道内设备是否同一个。
+
+    v0.20：`--move <新目录>` 先迁移通道宿主（复制通道文件 + 更新本机指向），
+    再继续体检。差分包 append-only + 内容指纹去重，迁移天然安全——
+    不新增状态、不碰记忆内容。
+    """
     from . import channel
 
     store = _open_store(args)
     netdisk = store.netdisk
+    if getattr(args, "move", None):
+        if not netdisk:
+            print("尚未配置云盘通道，无从迁移：请先运行 membridge init。")
+            return 2
+        import shutil
+
+        new_dir = os.path.abspath(os.path.expanduser(args.move))
+        if os.path.realpath(new_dir) != os.path.realpath(netdisk):
+            os.makedirs(new_dir, exist_ok=True)
+            # 通道文件整体复制（身份证 / 密钥 / 差分包 / 心跳）；身份随文件走，不改写
+            for name in os.listdir(netdisk):
+                src = os.path.join(netdisk, name)
+                dst = os.path.join(new_dir, name)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                elif not os.path.exists(dst):
+                    shutil.copy2(src, dst)
+            store.set_netdisk(new_dir)
+            netdisk = new_dir
+            print(f"✅ 通道已迁移：{args.move}（通道文件已复制，本机指向已更新；"
+                  "其他设备下次同步检测到新宿主即自动跟随）")
+        else:
+            print("目标目录就是当前通道，无需迁移")
     if not netdisk:
         print("尚未配置云盘通道：请先运行 membridge init。")
         return 2
@@ -563,6 +602,12 @@ def cmd_channel(args: argparse.Namespace) -> int:  # noqa: ARG001
         print("⚠️ 通道目录不存在（云盘未登录 / 未开启同步 / 路径已变更）——"
               "跨设备同步当前不可用")
         return 1
+    # v0.20 可达性提示：宿主是桌面客户端型网盘时，容器 / 网页端够不着
+    lowered = netdisk.lower()
+    if "onedrive" in lowered or "icloud" in lowered:
+        print("ℹ️ 此通道宿主对容器 / 网页端不可达（仅本机桌面客户端）："
+              "需要接入请走 gateway，或 membridge channel --move <新目录> "
+              "迁到 WebDAV 型网盘（如坚果云）")
     manifest = channel.read_manifest(netdisk)
     if manifest:
         print(f"通道身份证: {manifest['channel_id']}"
@@ -888,7 +933,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                        help="三步接线：rclone 就位 → 授权 → 首次拉取（无头端自动装 rclone）")
     p.add_argument("--dir", required=True, help="本机同步文件夹（通道目录）")
     p.add_argument("--provider", choices=["onedrive", "jianguoyun"], default="onedrive",
-                   help="网盘（默认 onedrive；建议两家各接一次：OneDrive 主通道 + 坚果云共享桥，v0.19）")
+                   help="网盘（默认 onedrive；建议两家各接一次：坚果云主通道 + OneDrive 备胎，v0.19）")
+    p.add_argument("--role", choices=["primary", "backup"], default=None,
+                   help="主备角色（缺省按网盘默认：坚果云=primary 主通道，OneDrive=backup 备胎，v0.20）")
     p.add_argument("--remote", default="membridge",
                    help="网盘内相对路径（各端必须一致，默认 membridge）")
     p.add_argument("--paste-token", default=None,
@@ -917,6 +964,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("channel",
                        help="通道一致性体检：本机与其他设备是否指向同一个云盘通道（v0.13）")
+    p.add_argument("--move", default=None, metavar="新目录",
+                   help="迁移通道宿主：把通道文件复制到新目录并改本机指向（v0.20）。"
+                        "差分包 append-only + 内容指纹去重，迁移天然安全")
     p.set_defaults(func=cmd_channel)
 
     p = sub.add_parser(

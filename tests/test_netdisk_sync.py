@@ -235,3 +235,32 @@ def test_status_lines_readable():
     assert any("rclone" in line for line in lines)
     assert any("OneDrive" in line for line in lines)
     assert any("坚果云" in line for line in lines)
+
+
+def test_connect_default_roles_primary_backup():
+    """v0.20 主备分明：坚果云缺省 primary（主通道），OneDrive 缺省 backup（备胎）。"""
+    from membridge import cli
+
+    tmp, _, old_path = _with_fake_rclone()
+    try:
+        local = tmp / "channel"
+        ns = type("A", (), {"dir": str(local), "remote": "membridge",
+                            "provider": "jianguoyun", "role": None,
+                            "paste_token": None, "webdav_user": "u@x.com",
+                            "webdav_pass": "pw", "drive_dir": None,
+                            "db": str(tmp / "mem.db"), "device": None})()
+        assert cli.cmd_netdisk_connect(ns) == 0
+        state = json.loads((local / ".membridge-netdisk.json").read_text(encoding="utf-8"))
+        assert state["jianguoyun"]["role"] == "primary"
+
+        ns2 = type("A", (), {"dir": str(local), "remote": "membridge",
+                             "provider": "onedrive", "role": None,
+                             "paste_token": TOKEN, "webdav_user": None,
+                             "webdav_pass": None, "drive_dir": None,
+                             "db": str(tmp / "mem.db"), "device": None})()
+        assert cli.cmd_netdisk_connect(ns2) == 0
+        state = json.loads((local / ".membridge-netdisk.json").read_text(encoding="utf-8"))
+        assert state["onedrive"]["role"] == "backup"
+        assert state["jianguoyun"]["role"] == "primary"  # 按家登记互不覆盖
+    finally:
+        _restore_path(old_path)

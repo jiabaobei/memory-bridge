@@ -2,6 +2,15 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.20.0] - 2026-09-02
+
+主备分明 + 通道迁移命令 + 可达性文案。
+
+- **主备分明**：坚果云 = 主通道（WebDAV 全端可达），OneDrive = 备胎（坚果云出问题时顶上，不是淘汰）——保持一条主通道。`netdisk-connect` 增 `--role primary|backup`，缺省按网盘定（坚果云→primary，OneDrive→backup）；`netdisk-sync` / `sync --netdisk` 主通道先跑、备胎殿后；`netdisk-status` 报角色。
+- **新增 `membridge channel --move <新目录>`**：迁通道宿主从此一条命令——通道文件（身份证 / 密钥 / 差分包 / 心跳）复制到新目录 + 本机指向更新。差分包 append-only + 内容指纹去重，迁移天然安全；身份证随文件走绝不改写；不新增状态、不碰记忆内容。此前外部改通道目录只能重跑 `init --netdisk-dir`。
+- **可达性文案（零新步骤、零新配置）**：① 向导候选网盘加可达性标注（坚果云=全端可达（WebDAV）/ OneDrive、iCloud、百度网盘同步盘等=仅本机桌面客户端可达）；② `channel` 体检在宿主是 OneDrive/iCloud 时提示「此通道对容器/网页端不可达，需接入请走 gateway 或 channel --move 迁到 WebDAV 型网盘」。
+- **测试**：新增 3 例（迁移复制+改指向+身份证不改写、桌面独占宿主提示、主备缺省角色），全量 117 例除既有 5 例环境限制外全绿，零回归。
+
 ## [0.19.0] - 2026-09-02
 
 双网盘：OneDrive 主通道 + 坚果云共享桥，第一步就把网页端容器拉进三端闭环。
