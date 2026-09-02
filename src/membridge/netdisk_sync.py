@@ -87,12 +87,22 @@ def install_rclone() -> Tuple[bool, str]:
         return True, f"rclone 已就位：{find_rclone()}"
     if sys.platform not in ("linux",):
         return False, "请到 https://rclone.org/install/ 按系统指引安装 rclone 后重试"
+    # 优先系统包管理器（容器环境里官方下载通道常不可达；apt 源的旧版由
+    # bisync 的双向复制降级兜底，功能不缺）
+    if shutil.which("apt-get"):
+        try:
+            proc = subprocess.run(["apt-get", "install", "-y", "rclone"],
+                                  capture_output=True, text=True, timeout=600)
+            if proc.returncode == 0 and find_rclone():
+                return True, f"rclone 经系统包管理器安装：{find_rclone()}"
+        except (subprocess.SubprocessError, OSError):
+            pass
     import platform
     arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), "amd64")
     url = _DOWNLOAD_URL.format(arch=arch)
     tmp_zip = Path(os.environ.get("TMPDIR", "/tmp")) / "rclone-install.zip"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "membridge/0.19.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "membridge/0.21.0"})
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
             tmp_zip.write_bytes(resp.read())
         import zipfile
@@ -352,13 +362,37 @@ def connect(local_dir: str, remote_path: str, provider: str = "onedrive",
             "detail": str(local), "resolved_dir": str(local)}
 
 
+def _rclone_has_bisync() -> bool:
+    """bisync 需要 rclone ≥1.58；旧版返回 False 走双向复制降级。"""
+    try:
+        proc = _run_rclone(["bisync", "--help"], timeout=30)
+        return proc.returncode == 0
+    except (RuntimeError, subprocess.SubprocessError):
+        return False
+
+
 def bisync(local_dir: str, remote_path: str, provider: str = "onedrive",
            timeout: int = 600) -> Tuple[bool, str]:
-    """文件夹级双向同步（rclone bisync）。首跑自动加 --resync 建基线。"""
+    """文件夹级双向同步（rclone bisync）。首跑自动加 --resync 建基线。
+
+    旧版 rclone（<1.58，无 bisync）降级为双向复制：通道目录是 append-only
+    （差分包只增不删），双向复制与并集同步等价，不会误删文件。
+    """
     p = _provider(provider)
     local = Path(local_dir)
     marker = local / _MARKER
-    args = ["bisync", str(local), f"{p['remote']}:{remote_path}",
+    remote = f"{p['remote']}:{remote_path}"
+    if not _rclone_has_bisync():
+        excludes = ["--exclude", _MARKER, "--exclude", "devices/**"]
+        for src, dst in ((remote, str(local)), (str(local), remote)):  # 先取后推
+            proc = _run_rclone(["copy", src, dst] + excludes, timeout=timeout)
+            if proc.returncode != 0:
+                return False, (proc.stderr or proc.stdout).strip()[:300]
+        if not marker.exists():
+            local.mkdir(parents=True, exist_ok=True)
+            marker.write_text("bisync baseline", encoding="utf-8")
+        return True, f"{p['label']} 双向同步完成（旧版 rclone，双向复制兜底）"
+    args = ["bisync", str(local), remote,
             "--exclude", _MARKER, "--exclude", "devices/**"]
     if not marker.exists():
         args.append("--resync")

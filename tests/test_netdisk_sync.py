@@ -264,3 +264,48 @@ def test_connect_default_roles_primary_backup():
         assert state["jianguoyun"]["role"] == "primary"  # 按家登记互不覆盖
     finally:
         _restore_path(old_path)
+
+
+def _fake_rclone_no_bisync(tmp: Path, log: Path) -> Path:
+    """旧版 rclone 仿真：bisync 报 unknown command，其余命令照常。"""
+    fake = tmp / "rclone"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> "{log}"\n'
+        'if [ "$1" = "bisync" ]; then\n'
+        '  echo "unknown command bisync" >&2\n  exit 1\n'
+        "fi\n"
+        'if [ "$1" = "config" ] && [ "$2" = "file" ]; then\n'
+        f'  echo "Configuration file is"\n  echo "{tmp}/rclone.conf"\n'
+        "  exit 0\n"
+        "fi\n"
+        'if [ "$1" = "obscure" ]; then\n'
+        '  echo "OBS_PASSWORD"\n  exit 0\n'
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return fake
+
+
+def test_bisync_fallback_on_old_rclone():
+    """旧版 rclone（无 bisync）降级双向复制：先取后推，结果等价并集同步。"""
+    tmp = Path(tempfile.mkdtemp())
+    log = tmp / "calls.log"
+    _fake_rclone_no_bisync(tmp, log)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+    try:
+        local = tmp / "channel"
+        local.mkdir()
+        ok, detail = netdisk_sync.bisync(str(local), "membridge")
+        assert ok and "双向复制兜底" in detail
+        lines = [l for l in log.read_text(encoding="utf-8").splitlines()
+                 if l.startswith("copy ")]
+        assert len(lines) == 2
+        assert lines[0].startswith("copy membridge_od:membridge")  # 先取
+        assert lines[1].startswith(f"copy {local}")                 # 后推
+        assert (local / netdisk_sync._MARKER).exists()
+    finally:
+        os.environ["PATH"] = old_path
