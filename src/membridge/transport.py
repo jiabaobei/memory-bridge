@@ -75,6 +75,8 @@ class FolderTransport:
         self.channel_status = ""  # v0.13 通道身份核对结果（created/adopted/matched/mismatch）
         os.makedirs(os.path.join(root, OUTBOX), exist_ok=True)
         os.makedirs(os.path.join(root, ARCHIVE), exist_ok=True)
+        # v0.17：凡是走通道的操作都刷新本设备心跳（含 init——否则「配好了却没人看得见」）
+        channel.heartbeat(root, store)
 
     # ---------- 发送 ----------
 
@@ -257,6 +259,9 @@ class FolderTransport:
             applied.append((fn, delta.from_device, result))
             for d in delta.nodes:
                 store_fps.add(fingerprint(d["content"]))
+            # v0.17：收下的记忆不再回发。否则 sync 双向下，一端取回即回发，
+            # 通道里全是互相转发的重复包（内容去重仍安全，但包数无限增长）
+            self._remember_published(delta.nodes)
             # 只有 outbox 的包才需要归档；archive 里的原地保留，供后续设备补取
             if allow_archive:
                 try:

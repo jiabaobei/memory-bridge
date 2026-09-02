@@ -15,13 +15,18 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import sys
 import time
 import uuid
 from typing import Dict, List, Optional, Tuple
 
 CHANNEL_FILE = "channel.json"
+KEY_FILE = "channel.key"
+DEVICES_DIR = "devices"
 
 
 def manifest_path(root: str) -> str:
@@ -150,3 +155,97 @@ def _clear_channel_warning(store) -> None:
     if store._get_meta("channel_warning"):
         with store.transaction():
             store._set_meta("channel_warning", "")
+
+
+# ---------------- v0.17：通道密钥 + 设备心跳 ----------------
+
+def key_path(root: str) -> str:
+    return os.path.join(root, KEY_FILE)
+
+
+def ensure_key(root: str, create: bool = True) -> Optional[str]:
+    """通道密钥随通道走：没有就生成，随网盘同步到各端（v0.17）。
+
+    各端零输入、零托管、零复述——用户与 AI 都不接触密钥，漏洞「AI 把口令
+    念进聊天」从根上消失。安全档位：默认防明文落地 / 防误分享（密钥在网盘里）；
+    需要严格端到端加密时另设 --passphrase，此时口令优先、通道密钥自动让位。
+
+    create=False：只读不建。取回侧用它——v0.16 及更早的通道本来就用口令，
+    不该因为升级而悄悄换钥匙（那样只会把「口令不匹配」的提示变得更难懂）。
+    """
+    final = key_path(root)
+    try:
+        with open(final, "r", encoding="utf-8") as f:
+            key = f.read().strip()
+        if key:
+            return key
+    except OSError:
+        pass
+    if not create:
+        return None
+    os.makedirs(root, exist_ok=True)
+    key = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
+    tmp = final + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(key)
+    os.replace(tmp, final)
+    return key
+
+
+def key_fingerprint(key: str) -> str:
+    """密钥指纹：只用于各端核对「是不是同一把钥匙」，永不打印密钥本体。"""
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:4]
+
+
+def _safe_dev(device: str) -> str:
+    return "".join(c if c.isalnum() or c in "._-" else "_" for c in device) or "device"
+
+
+def heartbeat(root: str, store) -> Optional[str]:
+    """刷新本设备心跳（v0.17）：每端只写自己的 devices/<设备>.json。
+
+    只写自己的文件 → 无共享可变状态 → 天然零冲突（也避开了网盘生成
+    「xxx (1).json」冲突副本）。init 也会触发（构造 FolderTransport 时），
+    所以「设备已在通道里但从没发过包」这种隐身状态不再出现。
+    """
+    from .schema import local_manifest, manifest_fp
+
+    rec = {
+        "device": store.device_name,
+        "platform": sys.platform,
+        "last_seen": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "nodes": store.count_nodes(),
+        "channel_id": store.channel_id or "",
+        "container": manifest_fp(local_manifest(store))[:8],
+    }
+    d = os.path.join(root, DEVICES_DIR)
+    try:
+        os.makedirs(d, exist_ok=True)
+        final = os.path.join(d, _safe_dev(store.device_name) + ".json")
+        tmp = final + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(rec, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, final)
+        return final
+    except Exception:
+        return None  # 心跳是纯元数据，失败绝不阻断同步主流程
+
+
+def roster(root: str) -> List[Dict]:
+    """读取通道内全部设备心跳，按最后活跃倒序（v0.17）。"""
+    d = os.path.join(root, DEVICES_DIR)
+    if not os.path.isdir(d):
+        return []
+    out: List[Dict] = []
+    for fn in sorted(os.listdir(d)):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, fn), "r", encoding="utf-8") as f:
+                rec = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if rec.get("device"):
+            out.append(rec)
+    out.sort(key=lambda r: r.get("last_seen", ""), reverse=True)
+    return out

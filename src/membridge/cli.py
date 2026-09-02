@@ -235,14 +235,28 @@ def cmd_apply(args: argparse.Namespace) -> int:
     return 0
 
 
-def _resolve_passphrase(args: argparse.Namespace) -> Optional[str]:
-    """命令行优先，其次环境变量 MEMBRIDGE_PASSPHRASE（便于自动化同步）。"""
-    return args.passphrase or os.environ.get("MEMBRIDGE_PASSPHRASE")
+def _resolve_passphrase(
+    args: argparse.Namespace, root: Optional[str] = None, create: bool = True
+) -> Optional[str]:
+    """命令行 > 环境变量 > 通道密钥（v0.17：密钥随通道同步，各端零输入零复述）。
+
+    显式 --passphrase 仍是严格端到端加密，通道密钥自动让位——老通道行为不变。
+    create=False 用于取回侧：通道里本就没有密钥时不新建（那是老式口令通道）。
+    """
+    p = args.passphrase or os.environ.get("MEMBRIDGE_PASSPHRASE")
+    if p or not root or getattr(args, "plaintext", False):
+        return p  # 显式明文 = 明确放弃加密，此时不再生成/使用通道密钥
+    from . import channel
+
+    try:
+        return channel.ensure_key(root, create=create)
+    except OSError:
+        return None
 
 
 def cmd_publish(args: argparse.Namespace) -> int:
     store = _open_store(args)
-    passphrase = _resolve_passphrase(args)
+    passphrase = _resolve_passphrase(args, args.dir)
     if not passphrase and not args.plaintext:
         print("出于隐私安全，写入网盘默认必须加密：请加 --passphrase <口令>，"
               "或设置环境变量 MEMBRIDGE_PASSPHRASE，"
@@ -274,7 +288,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
 def cmd_fetch(args: argparse.Namespace) -> int:
     store = _open_store(args)
     tr = transport.FolderTransport(args.dir, store)
-    result = tr.fetch(passphrase=_resolve_passphrase(args))
+    result = tr.fetch(passphrase=_resolve_passphrase(args, args.dir, create=False))
     for fn, src, r in result["applied"]:
         if r.get("rejected"):
             print(f"已拒绝来自 {src} 的差分包 {fn}：嵌入器不一致"
@@ -289,6 +303,39 @@ def cmd_fetch(args: argparse.Namespace) -> int:
         print(f"环境错误 {fn}（包已保留，下次 fetch 自动重试）：{reason}")
     if not result["applied"] and not result["skipped"] and not result.get("errors"):
         print("通道中暂无新差分包。")
+    if tr.channel_status == "mismatch":
+        print("⚠️ 通道身份不一致：本机记录的通道 ID 与云盘里的身份证不符"
+              "（疑似通道分裂，运行 membridge channel 查看详情）")
+    return 0
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """一键双向同步（v0.17）：先取回他端记忆，再发布本机新记忆。
+
+    各端同一条命令、同一节奏——网页 / 手机 / PC 无需计划任务也能对齐，
+    这是「各平台各端共享记忆」真正兑现的那一步。
+    """
+    store = _open_store(args)
+    passphrase = _resolve_passphrase(args, args.dir)
+    tr = transport.FolderTransport(args.dir, store)
+    # 取回侧不新建密钥：老式口令通道升级后行为必须保持原样
+    result = tr.fetch(passphrase=_resolve_passphrase(args, args.dir, create=False))
+    got = sum(r.get("nodes_added", 0) for _, _, r in result["applied"] if not r.get("rejected"))
+    rejected = sum(1 for _, _, r in result["applied"] if r.get("rejected"))
+    try:
+        path = tr.publish(
+            passphrase=passphrase,
+            plaintext=args.plaintext,
+            embedder_info=embedder_identity(capabilities.best_embedder()),
+        )
+    except (ValueError, ImportError) as exc:
+        print(str(exc))
+        return 2
+    print(
+        f"sync：取回 {got} 条新记忆，发布 {'1 个差分包' if path else '无新内容'}"
+        + (f"，拒绝 {rejected} 个嵌入器不一致的包" if rejected else "")
+        + (f"，跳过 {len(result['skipped'])} 个" if result["skipped"] else "")
+    )
     if tr.channel_status == "mismatch":
         print("⚠️ 通道身份不一致：本机记录的通道 ID 与云盘里的身份证不符"
               "（疑似通道分裂，运行 membridge channel 查看详情）")
@@ -404,6 +451,22 @@ def cmd_channel(args: argparse.Namespace) -> int:  # noqa: ARG001
     others = channel.peers(netdisk, exclude=store.device_name)
     print(f"通道里出现过的其他设备: {'、'.join(others)}" if others
           else "通道里还没见过其他设备的差分包")
+    # v0.17：密钥指纹 + 设备心跳名册——「各端是不是同一条通道」从此一眼可查
+    print(f"通道密钥: 已启用（指纹 {channel.key_fingerprint(channel.ensure_key(netdisk))}）"
+          f"——随通道同步，各端零输入零复述；要严格端到端时另设 --passphrase")
+    roster = channel.roster(netdisk)
+    if roster:
+        print(f"通道内设备（心跳 {len(roster)} 台）：")
+        for r in roster:
+            tag = "（本机）" if r["device"] == store.device_name else ""
+            print(f"  · {r['device']}{tag}｜{r.get('platform', '?')}｜"
+                  f"最后活跃 {r.get('last_seen', '?')}｜{r.get('nodes', '?')} 条｜"
+                  f"容器 {r.get('container', '?')}")
+        fps = {r.get("container") for r in roster if r.get("container")}
+        print("✅ 各端容器指纹一致" if len(fps) <= 1
+              else f"⚠️ 容器指纹不一致：{'、'.join(sorted(fps))}（各端先跑 membridge schema 对账）")
+    else:
+        print("通道里还没有设备心跳（任一设备跑一次 membridge sync 即自动登记）")
     warning = channel.channel_warning(store)
     if warning:
         print(f"⚠️ 历史分裂告警（{warning.get('seen')}）："
@@ -578,6 +641,12 @@ def cmd_show_passphrase(args: argparse.Namespace) -> int:  # noqa: ARG001
     if not key:
         print("尚未配置：请先运行 membridge init。")
         return 2
+    if not getattr(args, "reveal", False):
+        print(f"本机同步口令已托管（指纹 …{key[-4:]}）。")
+        print("需要原文时运行 membridge show-passphrase --reveal——"
+              "口令一旦贴进聊天记录就等于泄露给第三方平台，v0.17 起新通道"
+              "默认使用随通道同步的通道密钥，通常无需再复述口令。")
+        return 0
     print("本机的自动同步口令是（配对新设备时，在对方设备输入同一个）：")
     print(key)
     print("\n提示：请仅在配对新设备时使用，勿泄露给他人。")
@@ -665,6 +734,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--dir", required=True)
     p.add_argument("--passphrase", default=None, help="端到端加密口令（与发布端一致）")
     p.set_defaults(func=cmd_fetch)
+
+    p = sub.add_parser("sync",
+                       help="一键双向同步：先取回其他设备记忆，再发布本机新记忆（v0.17）")
+    p.add_argument("--dir", required=True, help="同步文件夹（通道目录）")
+    p.add_argument("--passphrase", default=None,
+                   help="端到端加密口令（省略则用随通道同步的通道密钥）")
+    p.add_argument("--plaintext", action="store_true", help="明文写入（不推荐，需显式确认）")
+    p.set_defaults(func=cmd_sync)
 
     p = sub.add_parser("stats", help="记忆库统计")
     p.set_defaults(func=cmd_stats)
@@ -755,7 +832,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.set_defaults(func=cmd_set_passphrase)
 
     p = sub.add_parser("show-passphrase",
-                       help="配对新设备时查看系统托管的同步口令")
+                       help="查看本机托管的同步口令（默认只显示指纹，--reveal 才显示原文）")
+    p.add_argument("--reveal", action="store_true",
+                   help="显示口令原文（v0.17 起默认掩码：口令一旦贴进聊天就等于泄露）")
     p.set_defaults(func=cmd_show_passphrase)
 
     p = sub.add_parser("doctor", help="环境自检：版本 / 记忆库 / 可选依赖 / 平台检测")

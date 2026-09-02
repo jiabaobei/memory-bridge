@@ -171,3 +171,101 @@ def test_channel_cli_unconfigured():
         rc = cli.cmd_channel(type("A", (), {"db": store._tmp.name + "/mem.db", "device": None})())
     assert rc == 2 and "尚未配置" in buf.getvalue()
     store.close()
+
+
+# ---------------- v0.17：通道密钥 + 设备心跳 ----------------
+
+def test_channel_key_travels_with_channel():
+    """通道密钥随通道走：先到的端生成，后来的端拿到同一把——零输入零复述。"""
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    k1 = channel.ensure_key(root)
+    k2 = channel.ensure_key(root)
+    assert k1 and k1 == k2, "同一通道目录必须解析出同一把密钥"
+    assert channel.key_fingerprint(k1) == channel.key_fingerprint(k2)
+    assert Path(root, channel.KEY_FILE).exists()
+    assert channel.key_fingerprint(k1) not in k1  # 输出指纹不等于泄露密钥
+
+
+def test_heartbeat_registers_device_without_publishing():
+    """不发过包的设备也登记在册——「配好了却没人看得见」不再发生。"""
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    a = _store(DEV1)
+    FolderTransport(root, a)  # 只构造（init 同路径），不 publish
+    roster = channel.roster(root)
+    assert [r["device"] for r in roster] == [DEV1]
+    assert roster[0]["nodes"] == 0
+    b = _store(DEV2)
+    _remember(b, "用户在四川阿坝红原县驻点")
+    FolderTransport(root, b)
+    roster = channel.roster(root)
+    assert {r["device"] for r in roster} == {DEV1, DEV2}
+    assert next(r for r in roster if r["device"] == DEV2)["nodes"] == 1
+    a.close()
+    b.close()
+
+
+def test_each_device_writes_only_its_own_heartbeat():
+    """每端只写自己的文件 → 无共享可变状态 → 天然零冲突（无「xxx (1).json」）。"""
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    a = _store(DEV1)
+    b = _store(DEV2)
+    FolderTransport(root, a)
+    FolderTransport(root, b)
+    FolderTransport(root, a)  # A 再刷新一次，不应动 B 的文件
+    files = sorted(os.listdir(os.path.join(root, channel.DEVICES_DIR)))
+    assert len(files) == 2, files
+    assert all(f.endswith(".json") for f in files)
+    a.close()
+    b.close()
+
+
+def test_passphrase_free_encrypted_roundtrip():
+    """v0.17 核心：不带 --passphrase 也端到端加密往返（密钥随通道同步）。"""
+    try:
+        import cryptography  # noqa: F401
+    except ImportError:
+        return  # 未装 netdisk  extras，跳过（CI 装了才验证加密链路）
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    a = _store(DEV1)
+    _remember(a, COFFEE)
+    FolderTransport(root, a).publish(passphrase=channel.ensure_key(root))
+    b = _store(DEV2)
+    res = FolderTransport(root, b).fetch(passphrase=channel.ensure_key(root))
+    assert any(r.get("nodes_added", 0) >= 1 for _, _, r in res["applied"])
+    a.close()
+    b.close()
+
+
+def test_channel_cli_shows_fingerprint_never_secret():
+    """channel 输出只给指纹不给密钥——AI 无法再把口令念进聊天记录。"""
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    a = _store(DEV1)
+    _remember(a, COFFEE)
+    FolderTransport(root, a).publish(plaintext=True)
+    a.set_netdisk(root)
+    a.close()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cli.cmd_channel(type("A", (), {"db": a._tmp.name + "/mem.db", "device": None})())
+    out = buf.getvalue()
+    key = Path(root, channel.KEY_FILE).read_text(encoding="utf-8")
+    assert "通道密钥: 已启用" in out
+    assert key not in out, "通道命令绝不打印密钥本体"
+    # 心跳名册：本机在册、容器指纹一致
+    assert DEV1 in out and "（本机）" in out
+    assert "✅ 各端容器指纹一致" in out
+
+
+def test_show_passphrase_masked_by_default():
+    """show-passphrase 默认掩码，--reveal 才给原文（默认档不再泄露到聊天）。"""
+    a = _store(DEV1)
+    args = type("A", (), {"db": a._tmp.name + "/mem.db", "reveal": False, "device": None})()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cli.cmd_show_passphrase(args)
+    out = buf.getvalue()
+    if rc == 2:  # 本机 vault 未设置（非 Windows / 未 init）→ 只验证不打印任何密钥
+        assert "尚未配置" in out
+    else:
+        assert "指纹" in out and "--reveal" in out
+    a.close()

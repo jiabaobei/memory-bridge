@@ -51,6 +51,9 @@ membridge context "<主题>" -k 5
 
 # 查看记忆库概况
 membridge stats
+
+# 一键双向同步（取回他端记忆 + 发布本机新记忆）
+membridge sync --dir "<通道目录>"
 ```
 
 ## 工作流约定
@@ -58,5 +61,9 @@ membridge stats
 - **内容冻结**：写入时忠实记录用户原意，记忆桥永远不会改写已有记忆。
 - **少而准**：只记有长期价值的信息，不要把一次性细节塞进记忆。
 - **隐私**：含密码/密钥/证件的内容不要写入（系统会自动标记为 local，永不跨设备）。
+- **同步节奏**：每次会话开始与结束各跑一次 `membridge sync --dir "<通道目录>"`——
+  各端共享记忆靠这一步兑现，不要等自动任务。
+- **秘密纪律**：口令 / 令牌 / 密钥永不打印、永不写进聊天或记忆；需要核对时只报指纹
+  （`membridge channel` 只给通道密钥指纹，`show-passphrase` 默认掩码）。
 - 命令失败（如 membridge 未安装）时，告知用户运行 `pip install membridge` 并 `membridge init`。
 """
