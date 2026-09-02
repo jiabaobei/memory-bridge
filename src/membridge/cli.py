@@ -309,12 +309,8 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sync(args: argparse.Namespace) -> int:
-    """一键双向同步（v0.17）：先取回他端记忆，再发布本机新记忆。
-
-    各端同一条命令、同一节奏——网页 / 手机 / PC 无需计划任务也能对齐，
-    这是「各平台各端共享记忆」真正兑现的那一步。
-    """
+def _package_sync(args: argparse.Namespace) -> int:
+    """包级双向同步：先取回他端记忆，再发布本机新记忆（v0.17 原逻辑）。"""
     store = _open_store(args)
     passphrase = _resolve_passphrase(args, args.dir)
     tr = transport.FolderTransport(args.dir, store)
@@ -339,6 +335,100 @@ def cmd_sync(args: argparse.Namespace) -> int:
     if tr.channel_status == "mismatch":
         print("⚠️ 通道身份不一致：本机记录的通道 ID 与云盘里的身份证不符"
               "（疑似通道分裂，运行 membridge channel 查看详情）")
+    return 0
+
+
+def _netdisk_state_path(local_dir: str) -> Path:
+    return Path(local_dir) / ".membridge-netdisk.json"
+
+
+def _load_netdisk_state(local_dir: str) -> Optional[dict]:
+    p = _netdisk_state_path(local_dir)
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _netdisk_round(args: argparse.Namespace) -> bool:
+    """文件夹级双向一轮；未接线 / 失败都给出可读原因，返回是否继续包级同步。"""
+    from . import netdisk_sync
+
+    state = _load_netdisk_state(args.dir)
+    if not state:
+        print("网盘未接线：先跑 membridge netdisk-connect --dir <本目录> 完成三步接线")
+        return False
+    ok, detail = netdisk_sync.bisync(args.dir, state["remote_path"])
+    print(f"网盘双向：{detail}")
+    return ok
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """一键双向同步（v0.17）：先取回他端记忆，再发布本机新记忆。
+
+    各端同一条命令、同一节奏——网页 / 手机 / PC 无需计划任务也能对齐，
+    这是「各平台各端共享记忆」真正兑现的那一步。
+    v0.18：加 --netdisk 时，先跑网盘文件夹级双向，再跑包级同步。
+    """
+    if getattr(args, "netdisk", False) and not _netdisk_round(args):
+        return 2
+    return _package_sync(args)
+
+
+def cmd_netdisk_status(args: argparse.Namespace) -> int:
+    """网盘三端直达体检（v0.18）。"""
+    from . import netdisk_sync
+
+    for line in netdisk_sync.status(args.dir):
+        print(line)
+    state = _load_netdisk_state(args.dir) if args.dir else None
+    print("本机接线状态：" + (f"已接线 → {state['remote_path']}" if state else "未接线"))
+    return 0
+
+
+def cmd_netdisk_connect(args: argparse.Namespace) -> int:
+    """三步接线：rclone 就位 → 授权 → 首次拉取（v0.18）。
+
+    PC / Mac 已有 OneDrive 客户端时自动走捷径：直接指向本机云盘目录。
+    """
+    from . import netdisk_sync
+
+    token = args.paste_token
+    if token and os.path.isfile(token):
+        token = Path(token).read_text(encoding="utf-8").strip()
+    result = netdisk_sync.connect(
+        args.dir, args.remote, token=token, drive_dir=args.drive_dir
+    )
+    print(result["detail"])
+    if result["stage"] == "done":
+        _netdisk_state_path(args.dir).write_text(
+            json.dumps({"remote_path": result.get("resolved_dir", args.remote),
+                        "local_dir": args.dir}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        store = _open_store(args)
+        store.set_netdisk(args.dir)
+        print("接线完成：以后跑 membridge sync --netdisk 即三端自动双向")
+        return 0
+    return 1 if result["stage"] != "need-token" else 0
+
+
+def cmd_netdisk_sync(args: argparse.Namespace) -> int:
+    """网盘文件夹级双向 + 包级同步的完整一轮（v0.18）。"""
+    if not _netdisk_round(args):
+        return 2
+    return _package_sync(args)
+
+
+def cmd_netdisk_disconnect(args: argparse.Namespace) -> int:
+    """撤销网盘接线（v0.18）：删除授权段、接线状态与基线标记。"""
+    from . import netdisk_sync
+
+    removed = netdisk_sync.remove_remote()
+    if args.dir:
+        _netdisk_state_path(args.dir).unlink(missing_ok=True)
+        (Path(args.dir) / netdisk_sync._MARKER).unlink(missing_ok=True)
+    print("已撤销网盘授权段" if removed else "本机没有网盘授权段，无需撤销")
     return 0
 
 
@@ -750,7 +840,34 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--passphrase", default=None,
                    help="端到端加密口令（省略则用随通道同步的通道密钥）")
     p.add_argument("--plaintext", action="store_true", help="明文写入（不推荐，需显式确认）")
+    p.add_argument("--netdisk", action="store_true",
+                   help="先跑网盘文件夹级双向再跑包级同步（需已 netdisk-connect 接线，v0.18）")
     p.set_defaults(func=cmd_sync)
+
+    p = sub.add_parser("netdisk-status", help="网盘三端直达体检（rclone/授权/云盘目录/基线）")
+    p.add_argument("--dir", default=None, help="同步文件夹（通道目录）")
+    p.set_defaults(func=cmd_netdisk_status)
+
+    p = sub.add_parser("netdisk-connect",
+                       help="三步接线：rclone 就位 → 授权 → 首次拉取（无头端自动装 rclone）")
+    p.add_argument("--dir", required=True, help="本机同步文件夹（通道目录）")
+    p.add_argument("--remote", default="membridge",
+                   help="网盘内相对路径（各端必须一致，默认 membridge）")
+    p.add_argument("--paste-token", default=None,
+                   help="授权 token JSON（在有浏览器的机器跑 `rclone authorize onedrive` 得到）")
+    p.add_argument("--drive-dir", default=None, help="手动指定本机云盘目录（跳过自动探测）")
+    p.set_defaults(func=cmd_netdisk_connect)
+
+    p = sub.add_parser("netdisk-sync",
+                       help="网盘文件夹级双向同步，随后链式跑包级 sync（三端自动双向的完整一轮）")
+    p.add_argument("--dir", required=True, help="同步文件夹（通道目录）")
+    p.add_argument("--passphrase", default=None, help="端到端加密口令（省略则用通道密钥）")
+    p.add_argument("--plaintext", action="store_true", help="明文写入（不推荐，需显式确认）")
+    p.set_defaults(func=cmd_netdisk_sync)
+
+    p = sub.add_parser("netdisk-disconnect", help="撤销网盘接线：删除授权段与本机基线标记")
+    p.add_argument("--dir", default=None, help="同步文件夹（清除其中的基线标记）")
+    p.set_defaults(func=cmd_netdisk_disconnect)
 
     p = sub.add_parser("stats", help="记忆库统计")
     p.set_defaults(func=cmd_stats)

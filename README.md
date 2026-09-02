@@ -25,7 +25,7 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.17）
+## 当前能力（v0.18）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
@@ -35,6 +35,7 @@
 | 通道密钥随通道走（各端零输入） | 通道目录里的 `channel.key` 随网盘同步到各端，首次发布自动生成——跨端共享不必再记、再传、再复述任何口令；`--passphrase` 仍优先，严格端到端加密一字未改 | ✅ v0.17 |
 | 设备心跳（谁在通道里一眼可查） | 每端只写自己的 `devices/<设备>.json`（设备名 / 平台 / 最后活跃 / 节点数 / 容器指纹），只写自己的文件 → 无共享可变状态 → 零冲突；`init` 即登记，没发过包的设备不再隐身 | ✅ v0.17 |
 | `membridge sync` 一键双向 | 先取回他端记忆、再发布本机新记忆，输出一行汇总；网页 / 手机 / 平板无计划任务也能对齐，各端共享节奏统一 | ✅ v0.17 |
+| 网盘三端直达（网页端容器也能到 OneDrive） | 无头端三步接线：rclone 就位（Linux 容器自动装）→ 授权（token 只落盘权限 600 永不打印）→ 首次拉取；PC / Mac 已装 OneDrive 客户端则探测即指向、零配置。`netdisk-sync` 一条命令完成「文件夹级双向 + 包级同步」完整一轮，电脑、手机平板、网页端容器三端自动双向 | ✅ v0.18 |
 | 交接班（交接卡 + 工作台） | 第三种记忆类型 `kind=handover`：任务告一段落、上下文将满、或切换设备前写一张交接卡（`goal:/done:/failed:/next:/refs:` 行前缀约定；`failed` 行用硬句式留下「试过什么；因为什么；除非什么否则别重试」）。全库最新未过期交接卡成为**工作台**：注入时恒定在场、不走相关性检索——交接卡是状态声明，不是检索命中；新卡自动取代旧卡（取代是推导出来的，零新增状态位，跨设备同步后各端自动收敛到同一张卡）；超 7 天未更新自动降级为普通记忆（过期工作台比没有更危险）；交接卡触点边权重结构衰减，防止其连成超级枢纽抬排名；`membridge handoff` 查看工作台，`membridge handoff-hint` 打印常驻交接提示，随身记页面内置交接卡表单 | ✅ v0.15 |
 | 类型化边 + 证据 | 边带 `kind`（semantic / cooccur / entity）+ 极短 `evidence`——每条边可回答「为什么相关」；存量库打开自动迁移（旧边标 semantic），只加结构不碰内容 | ✅ v0.14 |
 | 实体锚点边 | 零依赖正则抽取代码符号 / 文件路径 / 仓库 / 标签为确定性锚点，共享同一锚点即连边——不靠字面巧合，中英混写也能连上 | ✅ v0.14 |
@@ -245,6 +246,35 @@ membridge publish --dir "..." --force    # 忽略本地记录，重发全量重�
 ```
 
 不加 `--force` 会输出「没有需要发布的新记忆。」，这是幂等表现，不是故障。
+
+#### 网盘三端直达：网页端容器如何到达你的 OneDrive（v0.18）
+
+各端共享的前提是「每台设备都能到达同一个网盘文件夹」。电脑有 OneDrive
+客户端、手机平板有 App，唯独网页端容器这类无头 Linux 环境没有任何网盘
+客户端——`netdisk-*` 命令组补的就是这一环（经 rclone，同样适用于
+Google Drive / Dropbox 等 rclone 支持的网盘；对 OneDrive 做了开箱适配）：
+
+```bash
+# 网页端容器（无头三步接线）：
+membridge netdisk-connect --dir /path/to/channel
+#   ① rclone 就位（Linux 容器自动下载安装）
+#   ② 提示去有浏览器的电脑跑：rclone authorize "onedrive"
+#      把得到的 {"access_token":...} 交给本端：
+membridge netdisk-connect --dir /path/to/channel --paste-token '{"access_token":...}'
+#   ③ 首次拉取网盘里的通道文件夹到本机
+membridge netdisk-sync --dir /path/to/channel   # 文件夹级双向 + 包级同步一轮
+membridge sync --netdisk --dir /path/to/channel # 日常一条命令同效
+
+# 电脑（已装 OneDrive 客户端，零配置捷径）：
+membridge netdisk-connect --dir "D:\sync\membridge"  # 探测到本机云盘目录直接指向
+
+membridge netdisk-status      # 体检：rclone / 授权 / 云盘目录 / 同步基线
+membridge netdisk-disconnect  # 撤销：删授权段与基线标记（幂等）
+```
+
+纪律：授权 token 只落盘（rclone 配置文件，权限 600），永不打印、永不写进
+记忆或日志；基线标记与 `devices/` 心跳目录排除出双向同步；老通道与既有
+命令行为不变。
 
 #### 多台设备如何一致指向同一个通道（v0.13）
 

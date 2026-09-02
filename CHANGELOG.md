@@ -2,6 +2,19 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.18.0] - 2026-09-02
+
+网盘三端直达：让网页端容器这类无头设备也能接入 OneDrive 同步文件夹，电脑、手机平板、网页端容器三端自动双向同步。
+
+- **起因**：一次真实翻车——网页端容器没有云盘同步客户端，够不着用户 OneDrive 里的通道，三端共享只剩两端。通道身份、密钥、包级双向在 v0.13–v0.17 已闭环，缺的只是「无头端如何到达网盘文件夹」这一环。
+- **新增 `netdisk_sync` 模块 + 四个命令**：
+  - `membridge netdisk-connect --dir <通道目录>`：三步接线——① rclone 就位（Linux 无头端自动下载安装）→ ② 授权（用户在有浏览器的设备跑 `rclone authorize onedrive`，token 经 `--paste-token` 交入，只落盘权限 600、永不打印）→ ③ 首次拉取（网盘通道文件夹拉到本机）。
+  - PC / Mac 已装 OneDrive 客户端时走捷径：探测到本机云盘目录直接指向，零配置、不装 rclone。
+  - `membridge netdisk-sync`：文件夹级双向（rclone bisync，首跑自动 `--resync` 建基线）+ 链式包级同步，一条命令完成三端对齐的完整一轮；`membridge sync --netdisk` 同效。
+  - `membridge netdisk-status` 体检 / `netdisk-disconnect` 撤销（删授权段 + 基线标记，幂等）。
+- **纪律**：核心零依赖不变（rclone 为外部工具经 subprocess 调用）；基线标记与 `devices/` 心跳目录排除出双向同步；不改写记忆内容，加解密仍由 transport 层完成；老通道、老命令行为一字未改。
+- **测试**：新增 `test_netdisk_sync` 9 例（假 rclone 验证命令拼装、授权落盘 600、首跑 --resync、捷径分支），全量 109 例除既有 5 例环境限制外全绿，零回归。
+
 ## [0.17.1] - 2026-09-02
 
 自动同步链接入通道密钥 + 旧口令退役工具。
