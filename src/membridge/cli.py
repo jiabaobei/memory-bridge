@@ -343,24 +343,35 @@ def _netdisk_state_path(local_dir: str) -> Path:
 
 
 def _load_netdisk_state(local_dir: str) -> Optional[dict]:
+    """接线状态按网盘分家登记：{provider: {remote_path, local_dir}}。
+
+    v0.18 旧格式（扁平 {"remote_path": ...}）按 OneDrive 兼容读入。
+    """
     p = _netdisk_state_path(local_dir)
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        raw = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    if isinstance(raw, dict) and "remote_path" in raw:
+        raw = {"onedrive": raw}
+    return raw or None
 
 
 def _netdisk_round(args: argparse.Namespace) -> bool:
-    """文件夹级双向一轮；未接线 / 失败都给出可读原因，返回是否继续包级同步。"""
+    """文件夹级双向一轮（每家已接网盘各跑一次）；未接线给可读原因。"""
     from . import netdisk_sync
 
     state = _load_netdisk_state(args.dir)
     if not state:
         print("网盘未接线：先跑 membridge netdisk-connect --dir <本目录> 完成三步接线")
         return False
-    ok, detail = netdisk_sync.bisync(args.dir, state["remote_path"])
-    print(f"网盘双向：{detail}")
-    return ok
+    ok_all = True
+    for provider, conf in state.items():
+        ok, detail = netdisk_sync.bisync(
+            args.dir, conf["remote_path"], provider=provider)
+        print(f"网盘双向：{detail}")
+        ok_all = ok_all and ok
+    return ok_all
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
@@ -376,41 +387,53 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 
 def cmd_netdisk_status(args: argparse.Namespace) -> int:
-    """网盘三端直达体检（v0.18）。"""
+    """网盘三端直达体检（v0.18；v0.19 双网盘）。"""
     from . import netdisk_sync
 
     for line in netdisk_sync.status(args.dir):
         print(line)
     state = _load_netdisk_state(args.dir) if args.dir else None
-    print("本机接线状态：" + (f"已接线 → {state['remote_path']}" if state else "未接线"))
+    if state:
+        for provider, conf in state.items():
+            print(f"本机接线状态：{provider} 已接线 → {conf['remote_path']}")
+    else:
+        print("本机接线状态：未接线")
     return 0
 
 
 def cmd_netdisk_connect(args: argparse.Namespace) -> int:
-    """三步接线：rclone 就位 → 授权 → 首次拉取（v0.18）。
+    """三步接线：rclone 就位 → 授权 → 首次拉取（v0.18；v0.19 双网盘）。
 
-    PC / Mac 已有 OneDrive 客户端时自动走捷径：直接指向本机云盘目录。
+    PC / Mac 已有网盘客户端时自动走捷径：直接指向本机云盘目录。
+    建议两家各接一次：OneDrive 主通道 + 坚果云共享桥（网页/手机平板 ↔ PC）。
     """
     from . import netdisk_sync
 
     token = args.paste_token
     if token and os.path.isfile(token):
         token = Path(token).read_text(encoding="utf-8").strip()
+    webdav_pass = args.webdav_pass
+    if webdav_pass and os.path.isfile(webdav_pass):
+        webdav_pass = Path(webdav_pass).read_text(encoding="utf-8").strip()
     result = netdisk_sync.connect(
-        args.dir, args.remote, token=token, drive_dir=args.drive_dir
+        args.dir, args.remote, provider=args.provider, token=token,
+        webdav_user=args.webdav_user, webdav_pass=webdav_pass,
+        drive_dir=args.drive_dir,
     )
     print(result["detail"])
     if result["stage"] == "done":
-        _netdisk_state_path(args.dir).write_text(
-            json.dumps({"remote_path": result.get("resolved_dir", args.remote),
-                        "local_dir": args.dir}, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        path = _netdisk_state_path(args.dir)
+        state = _load_netdisk_state(args.dir) or {}
+        state[args.provider] = {
+            "remote_path": result.get("resolved_dir", args.remote),
+            "local_dir": args.dir,
+        }
+        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         store = _open_store(args)
         store.set_netdisk(args.dir)
-        print("接线完成：以后跑 membridge sync --netdisk 即三端自动双向")
+        print(f"接线完成（{args.provider}）：以后跑 membridge sync --netdisk 即三端自动双向")
         return 0
-    return 1 if result["stage"] != "need-token" else 0
+    return 1 if result["stage"] not in ("need-token", "need-credential") else 0
 
 
 def cmd_netdisk_sync(args: argparse.Namespace) -> int:
@@ -421,14 +444,27 @@ def cmd_netdisk_sync(args: argparse.Namespace) -> int:
 
 
 def cmd_netdisk_disconnect(args: argparse.Namespace) -> int:
-    """撤销网盘接线（v0.18）：删除授权段、接线状态与基线标记。"""
+    """撤销网盘接线（v0.18；v0.19 可按家撤销）：删授权段、接线状态与基线标记。"""
     from . import netdisk_sync
 
-    removed = netdisk_sync.remove_remote()
+    provider = getattr(args, "provider", None)
+    removed = netdisk_sync.remove_remote(provider)
     if args.dir:
-        _netdisk_state_path(args.dir).unlink(missing_ok=True)
-        (Path(args.dir) / netdisk_sync._MARKER).unlink(missing_ok=True)
-    print("已撤销网盘授权段" if removed else "本机没有网盘授权段，无需撤销")
+        state_path = _netdisk_state_path(args.dir)
+        state = _load_netdisk_state(args.dir)
+        if provider and state and provider in state:
+            del state[provider]
+            if state:
+                state_path.write_text(json.dumps(state, ensure_ascii=False),
+                                      encoding="utf-8")
+            else:
+                state_path.unlink(missing_ok=True)
+        elif not provider:
+            state_path.unlink(missing_ok=True)
+        if not state or provider is None:
+            (Path(args.dir) / netdisk_sync._MARKER).unlink(missing_ok=True)
+    scope = netdisk_sync._provider(provider)["label"] if provider else "全部网盘"
+    print(f"已撤销 {scope} 授权段" if removed else f"本机没有 {scope} 授权段，无需撤销")
     return 0
 
 
@@ -851,10 +887,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("netdisk-connect",
                        help="三步接线：rclone 就位 → 授权 → 首次拉取（无头端自动装 rclone）")
     p.add_argument("--dir", required=True, help="本机同步文件夹（通道目录）")
+    p.add_argument("--provider", choices=["onedrive", "jianguoyun"], default="onedrive",
+                   help="网盘（默认 onedrive；建议两家各接一次：OneDrive 主通道 + 坚果云共享桥，v0.19）")
     p.add_argument("--remote", default="membridge",
                    help="网盘内相对路径（各端必须一致，默认 membridge）")
     p.add_argument("--paste-token", default=None,
-                   help="授权 token JSON（在有浏览器的机器跑 `rclone authorize onedrive` 得到）")
+                   help="OneDrive 授权 token JSON（在有浏览器的机器跑 `rclone authorize onedrive` 得到）")
+    p.add_argument("--webdav-user", default=None, help="坚果云账号（配合 --provider jianguoyun）")
+    p.add_argument("--webdav-pass", default=None,
+                   help="坚果云应用密码（网页「安全选项 → 第三方应用管理」生成；只落盘不打印）")
     p.add_argument("--drive-dir", default=None, help="手动指定本机云盘目录（跳过自动探测）")
     p.set_defaults(func=cmd_netdisk_connect)
 
@@ -867,6 +908,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("netdisk-disconnect", help="撤销网盘接线：删除授权段与本机基线标记")
     p.add_argument("--dir", default=None, help="同步文件夹（清除其中的基线标记）")
+    p.add_argument("--provider", choices=["onedrive", "jianguoyun"], default=None,
+                   help="只撤销某一家（缺省两家全撤）")
     p.set_defaults(func=cmd_netdisk_disconnect)
 
     p = sub.add_parser("stats", help="记忆库统计")

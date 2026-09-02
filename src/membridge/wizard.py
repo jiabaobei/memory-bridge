@@ -122,6 +122,13 @@ def run_init(opts: InitOptions, out=print) -> int:
         else:
             skipped = True
             out(FREE_CLOUD_GUIDE)
+    # 双网盘建议（v0.19）：一家主通道 + 一家共享桥，把网页端容器拉进三端闭环
+    out("   🌐 双网盘建议：建议两家都配——OneDrive 作主通道（大多数情况），"
+        "坚果云作共享桥（兼顾网页端 / 手机平板端与 PC 端的记忆共享）。")
+    out("      网页端 AI 容器两家都能接：")
+    out("      · OneDrive：membridge netdisk-connect --dir <通道目录>（三步：装同步工具 → 授权 → 拉取）")
+    out("      · 坚果云：  membridge netdisk-connect --provider jianguoyun --dir <通道目录>"
+        " --webdav-user <账号> --webdav-pass <应用密码>")
 
     # ── 第二步：记忆库位置 ────────────────────────────────────────
     db = opts.db or default_db_path()

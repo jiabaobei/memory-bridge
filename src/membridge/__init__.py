@@ -23,7 +23,7 @@ from .retrieval import hybrid_search, search_with_reasons
 from . import (capabilities, clients, dss, handoff, heat, injection,
                privacy, schema, sync_agent, transport, vault)
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
 
 __all__ = [
     "MemoryNode",
