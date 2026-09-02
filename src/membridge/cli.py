@@ -618,6 +618,15 @@ def cmd_set_passphrase(args: argparse.Namespace) -> int:  # noqa: ARG001
         print("尚未配置云盘通道：请先运行 membridge init。")
         store.close()
         return 2
+    if getattr(args, "clear", False):
+        from .vault import clear_passphrase
+
+        clear_passphrase(store)
+        print("✅ 已清除本机托管的同步口令：今后与通道内其他设备共用随通道同步的通道密钥。")
+        print("（通道里若还有用旧口令加密的存量包，它们会解密失败并保留原位——"
+              "想彻底干净，先把旧包取回再执行本命令）")
+        store.close()
+        return 0
     p1 = getpass.getpass("设置自动同步口令（输入时不显示）: ")
     p2 = getpass.getpass("再输入一次确认: ")
     if not p1 or p1 != p2:
@@ -829,6 +838,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("set-passphrase",
                        help="手动设置/修改自动同步口令（通常无需使用：init 会自动生成并托管）")
+    p.add_argument("--clear", action="store_true",
+                   help="清除本机托管的口令，改用随通道同步的通道密钥（各端一把钥匙）")
     p.set_defaults(func=cmd_set_passphrase)
 
     p = sub.add_parser("show-passphrase",

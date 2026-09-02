@@ -17,6 +17,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from . import dss
+from . import channel as _channel
 from .dss import Delta
 from .embeddings import HashingEmbedder, embedder_identity
 from .node import MemoryNode
@@ -72,6 +73,9 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
         passphrase
         or os.environ.get("MEMBRIDGE_PASSPHRASE")
         or load_passphrase(store)
+        # v0.17：与 CLI 同一条回落链。否则自动任务用保险库口令、手动 sync 用
+        # 通道密钥，同一台设备会同时往一条通道里发两种钥匙的包——又是一次静默分裂
+        or _channel.ensure_key(netdisk)
     )
     if not pass_:
         out("⚠️ 尚未设置自动同步口令：请运行 membridge init 一次性设置")

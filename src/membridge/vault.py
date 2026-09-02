@@ -82,6 +82,16 @@ def save_passphrase(store: MemoryStore, passphrase: str) -> None:
         store._set_meta(_VAULT_KEY, base64.b64encode(blob).decode("ascii"))
 
 
+def clear_passphrase(store: MemoryStore) -> None:
+    """清除本机托管的口令（v0.17）：改用随通道同步的通道密钥，各端一把钥匙。
+
+    用于老通道收敛——本机口令与对端口令本来就是两个（各端 init 各自生成），
+    清掉之后两端才真正用同一把钥匙，也省掉了「把口令念给对端」这个动作。
+    """
+    with store.transaction():
+        store._set_meta(_VAULT_KEY, "")
+
+
 def load_passphrase(store: MemoryStore) -> Optional[str]:
     raw = store._get_meta(_VAULT_KEY)
     if not raw:

@@ -61,16 +61,21 @@ def test_importance_rule():
     assert not sync_agent.is_important(local)  # local 永不视为可上云的重要项
 
 
-def test_autosync_requires_passphrase_and_channel():
+def test_autosync_requires_channel_and_falls_back_to_channel_key():
+    """v0.17：通道仍必配；口令不再是必需项——没有口令就用随通道同步的通道密钥。
+
+    否则自动任务（保险库口令）与手动 sync（通道密钥）会往同一条通道里发
+    两种钥匙的包，对端解不开，又是静默分裂。
+    """
     saved = os.environ.pop("MEMBRIDGE_PASSPHRASE", None)  # 隔离系统环境变量
     try:
         store = _store("手机")
         lines = []
         assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 2
+        assert any("云盘通道" in ln for ln in lines)
         store.set_netdisk(rf"{tempfile.mkdtemp()}\chan")
         lines.clear()
-        assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 2
-        assert any("口令" in ln for ln in lines)
+        assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 0
     finally:
         if saved:
             os.environ["MEMBRIDGE_PASSPHRASE"] = saved
