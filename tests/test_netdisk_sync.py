@@ -309,3 +309,78 @@ def test_bisync_fallback_on_old_rclone():
         assert (local / netdisk_sync._MARKER).exists()
     finally:
         os.environ["PATH"] = old_path
+
+
+# ---------------- v0.22：桌面客户端直连判定 + --dir 回落 ----------------
+
+def test_inside_drive_dir_detects_client_synced_channel():
+    """通道目录在本机云盘客户端同步范围内 → 判定为直连（不再误报未接线）。"""
+    tmp = Path(tempfile.mkdtemp())
+    drive = tmp / "Nutstore"
+    drive.mkdir()
+    chan = drive / "1" / "我的坚果云" / "membridge"
+    chan.mkdir(parents=True)
+    assert netdisk_sync.inside_drive_dir(str(chan), [str(drive)]) == str(drive)
+    outside = tmp / "elsewhere" / "membridge"
+    outside.mkdir(parents=True)
+    assert netdisk_sync.inside_drive_dir(str(outside), [str(drive)]) is None
+
+
+def test_status_reports_client_direct_link():
+    """体检要说出「桌面客户端直连」，而不是让用户以为通道没配好。"""
+    tmp = Path(tempfile.mkdtemp())
+    drive = tmp / "Nutstore"
+    drive.mkdir()
+    chan = drive / "membridge"
+    chan.mkdir()
+    orig = netdisk_sync.detect_local_drive_dirs
+    netdisk_sync.detect_local_drive_dirs = lambda: [str(drive)]  # 注入云盘目录
+    try:
+        lines = netdisk_sync.status(str(chan))
+        assert any("桌面客户端直连" in ln for ln in lines)
+        plain = Path(tempfile.mkdtemp()) / "membridge"
+        plain.mkdir()
+        assert not any("桌面客户端直连" in ln for ln in netdisk_sync.status(str(plain)))
+    finally:
+        netdisk_sync.detect_local_drive_dirs = orig
+
+
+def test_sync_status_fall_back_to_configured_channel():
+    """sync / netdisk-status 省略 --dir 时用已配置通道；无通道则明确提示而非报错。"""
+    import io
+    import contextlib
+    from membridge import cli, netdisk_sync as ns
+
+    tmp = Path(tempfile.mkdtemp())
+    chan = tmp / "membridge"
+    chan.mkdir()
+    db = tmp / "mem.db"
+    from membridge.store import MemoryStore
+    s = MemoryStore(str(db), device="PC-A")
+    s.set_netdisk(str(chan))
+    s.close()
+
+    def args(**kw):
+        return type("A", (), {"db": str(db), "device": None, **kw})()
+
+    # ① 省略 --dir：回落到已配置通道，能跑完
+    a = args(dir=None, netdisk=False, plaintext=True, passphrase=None)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cli.cmd_sync(a)
+    assert rc == 0 and "取回" in buf.getvalue()
+    assert a.dir == str(chan)   # 已回填，后续链路照旧
+
+    # ② 显式 --dir：老行为一字不变（不被覆盖）
+    other = tmp / "other"
+    other.mkdir()
+    b = args(dir=str(other), netdisk=False, plaintext=True, passphrase=None)
+    assert cli._fill_dir_from_netdisk(b) and b.dir == str(other)
+
+    # ③ 既无 --dir 又未配置通道：给可行动提示，不抛异常
+    fresh = tmp / "fresh.db"
+    c = args(db=str(fresh), dir=None)
+    buf2 = io.StringIO()
+    with contextlib.redirect_stdout(buf2):
+        ok = cli._fill_dir_from_netdisk(c)
+    assert ok is False and "尚未配置云盘通道" in buf2.getvalue()

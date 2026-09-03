@@ -102,7 +102,7 @@ def install_rclone() -> Tuple[bool, str]:
     url = _DOWNLOAD_URL.format(arch=arch)
     tmp_zip = Path(os.environ.get("TMPDIR", "/tmp")) / "rclone-install.zip"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "membridge/0.21.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "membridge/0.22.0"})
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
             tmp_zip.write_bytes(resp.read())
         import zipfile
@@ -408,6 +408,25 @@ def bisync(local_dir: str, remote_path: str, provider: str = "onedrive",
     return True, f"{p['label']} 双向同步完成"
 
 
+def inside_drive_dir(local_dir: str, drives: Optional[List[str]] = None) -> Optional[str]:
+    """通道目录是否落在本机某个云盘客户端同步目录内（v0.22）。
+
+    落在其中 = 本机网盘客户端已经在同步它了，无需 rclone、也无需接线。
+    此前体检只看 rclone 授权段，PC 这类装了客户端的机器会被误报成「未接线」。
+    """
+    try:
+        target = Path(local_dir).resolve()
+    except OSError:
+        return None
+    for d in (drives if drives is not None else detect_local_drive_dirs()):
+        try:
+            target.relative_to(Path(d).resolve())
+            return d
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 def status(local_dir: Optional[str]) -> List[str]:
     """网盘直达体检：给出可读状态行（两家网盘分开报）。"""
     lines = []
@@ -420,4 +439,8 @@ def status(local_dir: Optional[str]) -> List[str]:
     if local_dir:
         marker = Path(local_dir) / _MARKER
         lines.append(f"网盘同步基线：{'已建立' if marker.exists() else '未建立（首次 netdisk-sync 自动建立）'}")
+        inside = inside_drive_dir(local_dir, drives)
+        if inside:
+            lines.append(f"✅ 通道目录在「{inside}」的客户端同步范围内"
+                         f"——桌面客户端直连，无需 rclone 接线")
     return lines
