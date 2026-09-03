@@ -384,3 +384,123 @@ def test_sync_status_fall_back_to_configured_channel():
     with contextlib.redirect_stdout(buf2):
         ok = cli._fill_dir_from_netdisk(c)
     assert ok is False and "尚未配置云盘通道" in buf2.getvalue()
+
+
+def test_sync_netdisk_falls_back_to_configured_channel():
+    """v0.23.1 回归：`sync --netdisk` 省略 --dir 不得崩（此前网盘轮先于目录
+    回落执行，直接 TypeError）。"""
+    import io
+    import contextlib
+    from membridge import cli
+    from membridge.store import MemoryStore
+
+    tmp, _log, old_path = _with_fake_rclone()
+    try:
+        chan = tmp / "membridge"
+        chan.mkdir()
+        db = tmp / "mem.db"
+        s = MemoryStore(str(db), device="PC-A")
+        s.set_netdisk(str(chan))
+        s.close()
+        (chan / ".membridge-netdisk.json").write_text(
+            json.dumps({"jianguoyun": {"remote_path": "membridge",
+                                       "local_dir": str(chan), "role": "primary"}}),
+            encoding="utf-8",
+        )
+        a = type("A", (), {"db": str(db), "device": None, "dir": None,
+                           "netdisk": True, "plaintext": True, "passphrase": None})()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.cmd_sync(a)
+        assert rc == 0
+        assert a.dir == str(chan)  # 网盘轮与包级轮共用回填目录
+    finally:
+        _restore_path(old_path)
+
+
+def test_connect_state_stores_remote_subpath_not_local_dir():
+    """v0.23.1 回归：接线状态里的 remote_path 必须是远端子路径（bisync 拼
+    <remote>:<path>）；v0.23.0 误存本机目录，真机首同步 409。"""
+    import io
+    import contextlib
+    from membridge import cli
+
+    tmp, _log, old_path = _with_fake_rclone()
+    try:
+        chan = tmp / "membridge"
+        db = tmp / "mem.db"
+        a = type("A", (), {
+            "db": str(db), "device": None, "dir": str(chan), "remote": "membridge",
+            "provider": "jianguoyun", "paste_token": None,
+            "webdav_user": "u@qq.com", "webdav_pass": "pw",
+            "drive_dir": None, "role": None,
+        })()
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli.cmd_netdisk_connect(a)
+        assert rc == 0
+        state = json.loads((chan / ".membridge-netdisk.json").read_text(encoding="utf-8"))
+        assert state["jianguoyun"]["remote_path"] == "membridge"
+        assert state["jianguoyun"]["local_dir"] == str(chan)
+    finally:
+        _restore_path(old_path)
+
+
+def test_rclone_config_path_parses_notice_when_file_missing():
+    """v0.23.1 真机实测：配置文件不存在时 `rclone config file` 首行是说明文字
+    （"Configuration file doesn't exist, ... will use this path:"），次行才是路径。
+    v0.23.0 把说明行当成了路径，凭据写进怪名文件、首次拉取找不到授权段。"""
+    tmp = Path(tempfile.mkdtemp())
+    fake = tmp / "rclone"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "config" ]; then\n'
+        '  echo "Configuration file doesn\'t exist, but rclone will use this path:"\n'
+        '  echo "/tmp/mb-fake-rclone/rclone.conf"\n'
+        "fi\n"
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+    try:
+        assert str(netdisk_sync.rclone_config_path()) == "/tmp/mb-fake-rclone/rclone.conf"
+    finally:
+        os.environ["PATH"] = old_path
+
+
+def test_jianguoyun_subroot_probe_rewrites_url():
+    """v0.23.1 真机实测：坚果云 WebDAV 根下常有「我的坚果云」一层，通道文件夹
+    多在其下；根目录没有时自动把授权段 url 指到那一层（配置即状态）。"""
+    tmp = Path(tempfile.mkdtemp())
+    fake = tmp / "rclone"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "lsd" ] && [ "$2" = "membridge_jgy:membridge" ]; then exit 1; fi\n'
+        'if [ "$1" = "lsd" ]; then exit 0; fi\n'
+        'if [ "$1" = "config" ] && [ "$2" = "file" ]; then\n'
+        f'  echo "{tmp}/rclone.conf"\n  exit 0\n'
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    cfg = tmp / "rclone.conf"
+    cfg.write_text(
+        "[membridge_jgy]\n"
+        "type = webdav\n"
+        "url = https://dav.jianguoyun.com/dav/\n"
+        "vendor = other\n"
+        "user = u\n"
+        "pass = OBS_PASSWORD\n",
+        encoding="utf-8",
+    )
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+    try:
+        sub = netdisk_sync._resolve_jianguoyun_subroot(
+            netdisk_sync._provider("jianguoyun"), "membridge")
+        # url 已含「我的坚果云」一层，路径名保持原样（防双重拼接）
+        assert sub == "membridge"
+        assert "url = https://dav.jianguoyun.com/dav/我的坚果云" in cfg.read_text(encoding="utf-8")
+    finally:
+        os.environ["PATH"] = old_path

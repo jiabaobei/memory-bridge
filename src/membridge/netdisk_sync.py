@@ -144,8 +144,12 @@ def rclone_config_path() -> Path:
             ).stdout
             for line in out.splitlines():
                 line = line.strip()
-                if line and not line.startswith("Configuration file is"):
-                    return Path(line)
+                # 配置文件不存在时 rclone 首行是说明文字（"Configuration file
+                # doesn't exist, but rclone will use this path:"），次行才是路径——
+                # 两行都以 "Configuration file" 开头的判断要整体跳过（v0.23.1 真机实测）
+                if not line or line.startswith("Configuration file"):
+                    continue
+                return Path(line).expanduser()
         except (subprocess.SubprocessError, OSError):
             pass
     return Path.home() / ".config" / "rclone" / "rclone.conf"
@@ -289,6 +293,34 @@ def _run_rclone(args: List[str], timeout: int = 600) -> subprocess.CompletedProc
     )
 
 
+def _resolve_jianguoyun_subroot(p: dict, remote_path: str) -> str:
+    """坚果云 WebDAV 根下通常还有一层「我的坚果云」，通道文件夹多在其下。
+
+    根目录没有 <remote_path> 而「我的坚果云/<remote_path>」存在时，把授权段的
+    url 指到那一层（配置即状态，后续 bisync 用同一段 + 同一路径名自然落在同
+    一位置）。两处都没有时原样返回，让首次拉取给出原始报错（v0.23.1 真机实测）。
+    """
+    if _run_rclone(["lsd", f"{p['remote']}:{remote_path}"]).returncode == 0:
+        return remote_path
+    sub = f"我的坚果云/{remote_path}"
+    if _run_rclone(["lsd", f"{p['remote']}:{sub}"]).returncode != 0:
+        return remote_path
+    base = p["webdav_url"].rstrip("/") + "/我的坚果云"
+
+    def transform(text: str) -> str:
+        out = []
+        for ln in text.splitlines():
+            if ln.strip().startswith("url = ") and p["webdav_url"] in ln:
+                out.append(f"url = {base}")
+            else:
+                out.append(ln)
+        return "\n".join(out) + "\n"
+
+    _rewrite_config(rclone_config_path(), transform)
+    _out(f"②.5 探测到通道在「我的坚果云」下，授权段已指向 {base}")
+    return remote_path  # url 已含该层，路径名保持原样，避免双重拼接
+
+
 def connect(local_dir: str, remote_path: str, provider: str = "onedrive",
             token: Optional[str] = None, webdav_user: Optional[str] = None,
             webdav_pass: Optional[str] = None, drive_dir: Optional[str] = None) -> dict:
@@ -351,6 +383,10 @@ def connect(local_dir: str, remote_path: str, provider: str = "onedrive",
         _out(f"② 授权已写入 {cfg}（权限 600，不打印内容）")
     else:
         _out("② 授权已就位（沿用既有配置）")
+
+    # 坚果云：根下常有「我的坚果云」一层，通道多在其下——探测并对齐授权段
+    if provider == "jianguoyun":
+        remote_path = _resolve_jianguoyun_subroot(p, remote_path)
 
     # 第三步：首次拉取
     proc = _run_rclone(["copy", f"{p['remote']}:{remote_path}", str(local)])

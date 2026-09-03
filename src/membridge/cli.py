@@ -406,9 +406,13 @@ def cmd_sync(args: argparse.Namespace) -> int:
     各端同一条命令、同一节奏——网页 / 手机 / PC 无需计划任务也能对齐，
     这是「各平台各端共享记忆」真正兑现的那一步。
     v0.18：加 --netdisk 时，先跑网盘文件夹级双向，再跑包级同步。
+    v0.23.1：--netdisk 轮也要先回落 --dir（此前省略 --dir 时网盘轮拿不到目录直接崩）。
     """
-    if getattr(args, "netdisk", False) and not _netdisk_round(args):
-        return 2
+    if getattr(args, "netdisk", False):
+        if not _fill_dir_from_netdisk(args):
+            return 2
+        if not _netdisk_round(args):
+            return 2
     return _package_sync(args)
 
 
@@ -460,8 +464,10 @@ def cmd_netdisk_connect(args: argparse.Namespace) -> int:
         state = _load_netdisk_state(args.dir) or {}
         # 主备分明（v0.20）：缺省坚果云=主通道，OneDrive=备胎（顶上用，不是淘汰）
         role = args.role or ("primary" if args.provider == "jianguoyun" else "backup")
+        # remote_path 必须是远端子路径（bisync 拼成 <remote>:<path>）；
+        # v0.23.0 误存 resolved_dir（本机目录），真机首同步即 409
         state[args.provider] = {
-            "remote_path": result.get("resolved_dir", args.remote),
+            "remote_path": args.remote,
             "local_dir": args.dir,
             "role": role,
         }
