@@ -293,6 +293,29 @@ def _run_rclone(args: List[str], timeout: int = 600) -> subprocess.CompletedProc
     )
 
 
+def record_state(local_dir: str, provider: str, remote_path: str,
+                 role: Optional[str] = None) -> Path:
+    """接线状态按家登记（v0.25 抽出：CLI 与向导共用）。
+
+    role 主备分明（v0.20）：primary=主通道，backup=备胎；缺省不写角色。
+    """
+    path = Path(local_dir) / ".membridge-netdisk.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(raw, dict) and "remote_path" in raw:  # v0.18 旧格式兼容
+            raw = {"onedrive": raw}
+    except (OSError, ValueError):
+        raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    entry = {"remote_path": remote_path, "local_dir": local_dir}
+    if role:
+        entry["role"] = role
+    raw[provider] = entry
+    path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
 def _resolve_jianguoyun_subroot(p: dict, remote_path: str) -> str:
     """坚果云 WebDAV 根下通常还有一层「我的坚果云」，通道文件夹多在其下。
 

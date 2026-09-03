@@ -460,18 +460,9 @@ def cmd_netdisk_connect(args: argparse.Namespace) -> int:
     )
     print(result["detail"])
     if result["stage"] == "done":
-        path = _netdisk_state_path(args.dir)
-        state = _load_netdisk_state(args.dir) or {}
         # 主备分明（v0.20）：缺省坚果云=主通道，OneDrive=备胎（顶上用，不是淘汰）
         role = args.role or ("primary" if args.provider == "jianguoyun" else "backup")
-        # remote_path 必须是远端子路径（bisync 拼成 <remote>:<path>）；
-        # v0.23.0 误存 resolved_dir（本机目录），真机首同步即 409
-        state[args.provider] = {
-            "remote_path": args.remote,
-            "local_dir": args.dir,
-            "role": role,
-        }
-        path.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        netdisk_sync.record_state(args.dir, args.provider, args.remote, role)
         store = _open_store(args)
         store.set_netdisk(args.dir)
         print(f"接线完成（{args.provider}，{'主通道' if role == 'primary' else '备胎'}）："

@@ -32,7 +32,7 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.23)
+## Status (v0.25)
 
 | Capability | Status |
 |---|---|
@@ -63,7 +63,7 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | **Token economy** — MCP tools consolidated to 3 (`memory_context` merged into `memory_search`), retrieval relative-threshold filters weak hits, oversized memories get a soft "one sentence per memory" hint on write | ✅ v0.8 |
 | **doctor location health** — warns when the DB sits in a temp/generated directory, when the default DB and the env-var DB coexist (likely a split store), or when the device name is unset | ✅ v0.8 |
 | **Storage & retrieval** — embeddings stored as float32 BLOBs (⅓–⅕ of the JSON size, legacy DBs auto-migrate on open); two-phase search with an in-process vector cache | ✅ v0.8 |
-| One-command setup — `membridge init`: mandatory cloud channel (auto-picked by priority rule), **sync passphrase auto-generated & vaulted (DPAPI on Windows; a permission-600 file vault bound to the local user on Linux/macOS since v0.23)**, scheduled auto-sync every 15 min, platform auto-config + WorkBuddy skill install | ✅ implemented |
+| One-command setup — `membridge init`: mandatory cloud channel (auto-picked by priority rule; when no drive client is detected, an interactive guided wiring takes over — reassurance copy, step-by-step Jianguoyun primary wiring, connection gate with an explicit "later" exit, optional OneDrive backup question, v0.25), **sync passphrase auto-generated & vaulted (DPAPI on Windows; a permission-600 file vault bound to the local user on Linux/macOS since v0.23)**, scheduled auto-sync every 15 min, platform auto-config + WorkBuddy skill install | ✅ implemented |
 | Auto-sync engine — important memories upload immediately, routine ones batched (≥5 or ≥24h), `local`-tagged never leave the device | ✅ implemented |
 | SAN (semantic association network, `w_ij = λ·co-occurrence + (1−λ)·cosine`) | ✅ implemented |
 | Path A injection (auditable context block) | ✅ implemented |

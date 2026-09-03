@@ -245,3 +245,94 @@ def test_init_never_writes_real_user_configs():
 
     for p, data in snapshot.items():
         assert p.read_bytes() == data, f"真实用户配置被测试改写：{p}"
+
+
+def _fake_rclone_simple(tmp: Path) -> None:
+    fake = tmp / "rclone"
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'if [ "$1" = "config" ] && [ "$2" = "file" ]; then echo "{tmp}/rclone.conf"; exit 0; fi\n'
+        'if [ "$1" = "obscure" ]; then echo "OBS_PASSWORD"; exit 0; fi\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+
+
+def test_guided_setup_connects_primary_and_gates():
+    """v0.25：交互式引导接线——坚果云主通道连接达标才继续，状态按家登记。"""
+    import getpass
+    import membridge.wizard as wizard
+
+    home = _with_home()
+    wizard.HOME_DIR = home
+    tmp = Path(tempfile.mkdtemp(prefix="mb-g-"))
+    _fake_rclone_simple(tmp)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+    answers = iter(["user@qq.com", "n"])  # 账号；OneDrive 备胎问句答 n
+    old_ask, old_gp = wizard._ask, getpass.getpass
+    wizard._ask = lambda prompt, default="": next(answers)
+    getpass.getpass = lambda prompt="": "应用密码"
+    try:
+        lines = []
+        chan, skipped, connected = wizard.guided_netdisk_setup(lines.append)
+        assert not skipped and chan == str(home / ".membridge" / "channel")
+        assert connected == [("jianguoyun", "membridge", "primary")]
+        assert any("连接达标" in ln for ln in lines)
+        assert any("安心" in ln for ln in lines)  # 打消顾虑文案在场
+    finally:
+        os.environ["PATH"] = old_path
+        wizard._ask, getpass.getpass = old_ask, old_gp
+        wizard.HOME_DIR = None
+        _restore()
+
+
+def test_guided_setup_later_exit_not_blocked():
+    """v0.25：门槛留明确出口——账号留空即「稍后配置」，不拦安装。"""
+    import membridge.wizard as wizard
+
+    home = _with_home()
+    wizard.HOME_DIR = home
+    old_ask = wizard._ask
+    wizard._ask = lambda prompt, default="": ""
+    try:
+        lines = []
+        chan, skipped, connected = wizard.guided_netdisk_setup(lines.append)
+        assert chan is None and skipped and connected == []
+        assert any("稍后配置" in ln for ln in lines)
+    finally:
+        wizard._ask = old_ask
+        wizard.HOME_DIR = None
+        _restore()
+
+
+def test_guided_setup_backup_optional():
+    """v0.25：主通道达标后顺问 OneDrive 备胎，接上即登记 backup 角色。"""
+    import getpass
+    import json as _json
+    import membridge.wizard as wizard
+
+    home = _with_home()
+    wizard.HOME_DIR = home
+    tmp = Path(tempfile.mkdtemp(prefix="mb-g2-"))
+    _fake_rclone_simple(tmp)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+    token = _json.dumps({"access_token": "abc", "token_type": "Bearer"})
+    answers = iter(["user@qq.com", "y", token])
+    old_ask, old_gp = wizard._ask, getpass.getpass
+    wizard._ask = lambda prompt, default="": next(answers)
+    getpass.getpass = lambda prompt="": "应用密码"
+    try:
+        lines = []
+        chan, skipped, connected = wizard.guided_netdisk_setup(lines.append)
+        assert not skipped
+        assert ("jianguoyun", "membridge", "primary") in connected
+        assert ("onedrive", "membridge", "backup") in connected
+        assert any("备胎接好" in ln for ln in lines)
+    finally:
+        os.environ["PATH"] = old_path
+        wizard._ask, getpass.getpass = old_ask, old_gp
+        wizard.HOME_DIR = None
+        _restore()

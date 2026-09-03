@@ -159,6 +159,61 @@ def _register_posix_autosync(out) -> None:
             out(f"   ⚠️ LaunchAgent 注册失败：{exc}")
 
 
+def guided_netdisk_setup(out, ask_fn=None, secret_fn=None):
+    """v0.25 第一步引导接线（交互式「提示框」）：安心文案 → 逐步配坚果云主通道
+    （连接达标才继续）→ 顺问 OneDrive 备胎（可跳过）。
+
+    返回 (通道目录, 是否稍后配置, [(provider, 远端子路径, 角色)])。
+    未达标且用户选稍后：(None, True, [])——门槛留一个明确出口，不拦安装。
+    """
+    import getpass
+
+    from . import netdisk_sync
+
+    ask_fn = ask_fn or _ask
+    secret_fn = secret_fn or getpass.getpass
+    out("   😌 配置前三个安心点：")
+    out("      · 坚果云免费版就够——同步的都是文本记忆，一年不到 1G，容量充足；")
+    out("      · 配的是「应用密码」（专用钥匙）而非账户密码，随时可一键作废；")
+    out("      · 配好后一切自动：每 15 分钟自动同步，零点击。")
+    out("   📝 坚果云应用密码获取：坚果云网页 → 账户信息 → 安全选项 →")
+    out("      第三方应用管理 → 添加应用密码（只显示一次，请复制好）。")
+    chan = str(_home() / ".membridge" / "channel")
+    connected: List[Tuple[str, str, str]] = []
+    for _attempt in range(3):
+        user = (ask_fn("坚果云账号（留空 = 稍后配置）") or "").strip()
+        if not user:
+            break
+        secret = secret_fn("坚果云应用密码（输入时不显示）")
+        if not secret:
+            out("   ⚠️ 应用密码为空，再试一次")
+            continue
+        result = netdisk_sync.connect(chan, "membridge", provider="jianguoyun",
+                                      webdav_user=user, webdav_pass=secret)
+        if result.get("ok"):
+            out("   ✅ 主通道连接达标：坚果云三步接线完成，继续安装")
+            connected = [("jianguoyun", "membridge", "primary")]
+            break
+        out(f"   ⚠️ 连接未达标：{result.get('detail', '')[:200]}")
+    if not connected:
+        out("   ⏭ 稍后配置：继续安装（记忆仅存本机）；随时重跑 membridge init 补齐。")
+        return None, True, []
+    ans = (ask_fn("顺便把 OneDrive 备胎也接上？(y/n，默认 n)") or "").strip().lower()
+    if ans == "y":
+        out("      请在有浏览器的电脑跑 `rclone authorize \"onedrive\"`，点允许后")
+        out("      把终端输出的 {\"access_token\":...} 贴过来。")
+        token = (ask_fn("粘贴授权 JSON（留空 = 跳过备胎）") or "").strip()
+        if token:
+            r2 = netdisk_sync.connect(chan, "membridge", provider="onedrive",
+                                      token=token)
+            if r2.get("ok"):
+                out("   ✅ 备胎接好：坚果云出问题时 OneDrive 顶上")
+                connected.append(("onedrive", "membridge", "backup"))
+            else:
+                out(f"   ⚠️ 备胎未接（不影响主通道）：{r2.get('detail', '')[:200]}")
+    return chan, False, connected
+
+
 def run_init(opts: InitOptions, out=print) -> int:
     interactive = sys.stdin.isatty() if opts.interactive is None else opts.interactive
 
@@ -168,6 +223,7 @@ def run_init(opts: InitOptions, out=print) -> int:
     out("   通道自动选择规则（规定于 RFC-001）：坚果云 > OneDrive > 百度网盘同步盘 > iCloud > Dropbox > Google Drive")
     netdisk = opts.netdisk_dir
     skipped = False
+    pending: List[Tuple[str, str, str]] = []
     if opts.skip_netdisk:
         skipped = True
     elif netdisk is None:
@@ -179,6 +235,10 @@ def run_init(opts: InitOptions, out=print) -> int:
                 f"{n}（{REACHABILITY.get(n, '可达性未知')}）" for n, _ in found[1:])
             out(f"   ☁️ 自动选定：{found[0][0]}（{reach or '可达性未知'}）→ {netdisk}"
                 + (f"（检测到备选：{alts}，可用 --netdisk-dir 覆盖）" if alts else ""))
+        elif interactive:
+            # v0.25：未检测到时走交互式引导接线——连接达标才继续安装，
+            # 留「稍后配置」明确出口（门槛不拦安装）
+            netdisk, skipped, pending = guided_netdisk_setup(out)
         else:
             skipped = True
             out(FREE_CLOUD_GUIDE)
@@ -210,6 +270,10 @@ def run_init(opts: InitOptions, out=print) -> int:
         FolderTransport(netdisk, store)
         store.set_netdisk(netdisk)
         out(f"\n☁️ 云盘通道已配置（必做项完成）：{netdisk}")
+        for prov, rpath, role in pending:  # v0.25 引导接线的各家登记
+            from . import netdisk_sync
+
+            netdisk_sync.record_state(netdisk, prov, rpath, role)
 
         # 通道身份（v0.13）：通道文件夹里已有 channel.json（其他设备先到）
         # → 认领同一通道；否则由本设备创建，其他设备以后自动认领。
