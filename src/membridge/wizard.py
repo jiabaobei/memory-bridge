@@ -112,6 +112,53 @@ def _ask(prompt: str, default: str = "") -> str:
     return ans or default
 
 
+def _register_posix_autosync(out) -> None:
+    """Linux / macOS 自动任务（v0.24）：与 Windows 计划任务同节奏（每 15 分钟）。
+
+    Linux 走用户 crontab（带标记行、幂等）；macOS 写 LaunchAgent plist。
+    注册不上只告警不阻塞——自动同步是锦上添花，手动 sync 永远兜底。
+    """
+    import shutil
+    import subprocess
+
+    exe = shutil.which("membridge") or f"{sys.executable} -m membridge"
+    if sys.platform == "linux":
+        cron = shutil.which("crontab")
+        if not cron:
+            out("   ⚠️ 无 crontab：未能注册自动任务（可手动跑 membridge autosync）")
+            return
+        cur = subprocess.run([cron, "-l"], capture_output=True, text=True).stdout or ""
+        kept = [l for l in cur.splitlines() if "membridge-autosync" not in l]
+        kept.append(f"*/15 * * * * {exe} autosync >/dev/null 2>&1  # membridge-autosync")
+        r = subprocess.run([cron, "-"], input="\n".join(kept) + "\n",
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            out("   ⏱ 自动同步 cron 已注册：每 15 分钟运行一次（重要记忆立即上云）")
+        else:
+            out(f"   ⚠️ cron 注册失败：{(r.stderr or r.stdout).strip()}")
+    elif sys.platform == "darwin":
+        plist = _home() / "Library/LaunchAgents/com.membridge.autosync.plist"
+        try:
+            plist.parent.mkdir(parents=True, exist_ok=True)
+            plist.write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+                '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+                '<plist version="1.0"><dict>\n'
+                '<key>Label</key><string>com.membridge.autosync</string>\n'
+                '<key>ProgramArguments</key><array>'
+                f'<string>{exe}</string><string>autosync</string></array>\n'
+                '<key>StartInterval</key><integer>900</integer>\n'
+                "</dict></plist>\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["launchctl", "load", str(plist)],
+                           capture_output=True, text=True)
+            out("   ⏱ 自动同步 LaunchAgent 已注册：每 15 分钟运行一次")
+        except OSError as exc:
+            out(f"   ⚠️ LaunchAgent 注册失败：{exc}")
+
+
 def run_init(opts: InitOptions, out=print) -> int:
     interactive = sys.stdin.isatty() if opts.interactive is None else opts.interactive
 
@@ -209,6 +256,8 @@ def run_init(opts: InitOptions, out=print) -> int:
                 out("   ⏱ 自动同步计划任务已注册：每 15 分钟运行一次（重要记忆立即上云）")
             else:
                 out(f"   ⚠️ 计划任务注册失败：{r.stderr.strip() or r.stdout.strip()}")
+        elif not opts.no_autosync:
+            _register_posix_autosync(out)
     else:
         out("\n⚠️ 未配置云盘：记忆仅存本机，跨设备功能未启用。")
         if not opts.skip_netdisk:

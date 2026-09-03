@@ -169,3 +169,101 @@ def test_init_autogenerates_passphrase_into_vault(tmp_root=None):
     finally:
         clients.HOME_DIR = None
         wizard.HOME_DIR = None
+
+
+def _fake_rclone_with_conf(tmp: Path) -> None:
+    """假 rclone + 含坚果云授权段的配置（has_remote 为真）。"""
+    conf = tmp / "rclone.conf"
+    conf.write_text("[membridge_jgy]\ntype = webdav\nurl = https://x/dav/\n",
+                    encoding="utf-8")
+    fake = tmp / "rclone"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "config" ] && [ "$2" = "file" ]; then\n'
+        f'  echo "{conf}"\n  exit 0\nfi\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+
+
+def test_autosync_runs_folder_round_when_rclone_wired():
+    """v0.24：rclone 接线的机器，自动循环先跑文件夹级双向再跑包级。"""
+    saved = os.environ.pop("MEMBRIDGE_PASSPHRASE", None)
+    tmp = Path(tempfile.mkdtemp(prefix="mb-as-"))
+    _fake_rclone_with_conf(tmp)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+    try:
+        store = _store("手机")
+        chan = tempfile.mkdtemp()
+        store.set_netdisk(chan)
+        (Path(chan) / ".membridge-netdisk.json").write_text(
+            json.dumps({"jianguoyun": {"remote_path": "membridge",
+                                       "local_dir": chan, "role": "primary"}}),
+            encoding="utf-8",
+        )
+        lines = []
+        assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 0
+        assert any("网盘双向" in ln for ln in lines)
+        store.close()
+    finally:
+        os.environ["PATH"] = old_path
+        if saved:
+            os.environ["MEMBRIDGE_PASSPHRASE"] = saved
+
+
+def test_autosync_skips_folder_round_without_remote():
+    """v0.24：本机云盘客户端机器（无授权段）静默跳过文件夹轮，不报错。"""
+    saved = os.environ.pop("MEMBRIDGE_PASSPHRASE", None)
+    tmp = Path(tempfile.mkdtemp(prefix="mb-as2-"))
+    _fake_rclone_with_conf(tmp)  # 配置里没有 [membridge_od] → has_remote 为假
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+    try:
+        store = _store("手机")
+        chan = tempfile.mkdtemp()
+        store.set_netdisk(chan)
+        (Path(chan) / ".membridge-netdisk.json").write_text(
+            json.dumps({"onedrive": {"remote_path": "membridge",
+                                     "local_dir": chan, "role": "backup"}}),
+            encoding="utf-8",
+        )
+        lines = []
+        assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 0
+        assert not any("网盘双向" in ln for ln in lines)
+        store.close()
+    finally:
+        os.environ["PATH"] = old_path
+        if saved:
+            os.environ["MEMBRIDGE_PASSPHRASE"] = saved
+
+
+def test_posix_cron_autosync_registration():
+    """v0.24：Linux 初始化注册用户 cron（带标记、幂等）。"""
+    import membridge.wizard as wiz
+
+    tmp = Path(tempfile.mkdtemp(prefix="mb-cron-"))
+    state = tmp / "crontab.store"
+    fake = tmp / "crontab"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-l" ]; then cat "' + str(state) + '" 2>/dev/null; exit 0; fi\n'
+        'if [ "$1" = "-" ]; then cat > "' + str(state) + '"; exit 0; fi\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = str(tmp) + os.pathsep + old_path
+    try:
+        lines = []
+        wiz._register_posix_autosync(lines.append)
+        assert any("cron 已注册" in ln for ln in lines)
+        body = state.read_text(encoding="utf-8")
+        assert "membridge-autosync" in body and "*/15" in body
+        # 幂等：再注册一次仍只有一行标记
+        wiz._register_posix_autosync(lines.append)
+        assert body and state.read_text(encoding="utf-8").count("membridge-autosync") == 1
+    finally:
+        os.environ["PATH"] = old_path

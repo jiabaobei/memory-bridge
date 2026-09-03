@@ -13,8 +13,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from . import dss
@@ -63,6 +65,32 @@ def _hours_since_last_publish(store: MemoryStore) -> float:
     return (time.time() - float(raw)) / 3600.0
 
 
+def _folder_round(netdisk: str, out) -> None:
+    """v0.24：文件夹级双向并入自动循环。
+
+    rclone 接线的机器先对齐文件夹再跑包级；本机有云盘客户端的机器没有
+    授权段（has_remote 为假）静默跳过——客户端自己维持文件夹同步。
+    """
+    from . import netdisk_sync
+
+    try:
+        state = json.loads(
+            (Path(netdisk) / ".membridge-netdisk.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(state, dict) and "remote_path" in state:  # v0.18 旧格式兼容
+        state = {"onedrive": state}
+    for provider in sorted(
+            state or {},
+            key=lambda k: 0 if (state[k] or {}).get("role") == "primary" else 1):
+        conf = state[provider] or {}
+        if not netdisk_sync.has_remote(provider):
+            continue
+        _ok, detail = netdisk_sync.bisync(
+            netdisk, conf.get("remote_path", "membridge"), provider=provider)
+        out(f"网盘双向：{detail}")
+
+
 def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = None,
                  out=print) -> int:
     store = MemoryStore(store_path or default_db_path())
@@ -70,6 +98,7 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
     if not netdisk:
         out("⚠️ 尚未配置云盘通道：请先运行 membridge init")
         return 2
+    _folder_round(netdisk, out)
     pass_ = (
         passphrase
         or os.environ.get("MEMBRIDGE_PASSPHRASE")
