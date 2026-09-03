@@ -7,7 +7,8 @@
 - migration=local 的记忆 **永不上云**（PAMS L1，优先级高于一切）
 
 入口：membridge autosync（由 init 注册的 Windows 计划任务每 15 分钟调用；
-也可手动运行）。口令来自口令保险库（vault，DPAPI 托管），用户无需再输入。
+也可手动运行）。口令来自口令保险库（vault：Windows 走 DPAPI，Linux / macOS
+走文件保险库，均绑定本机用户账户），用户无需再输入。
 """
 
 from __future__ import annotations

@@ -309,29 +309,8 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
-def _fill_dir_from_netdisk(args: argparse.Namespace) -> bool:
-    """v0.22：--dir 省略时回落到本机已配置的通道目录，免去每次敲长路径。
-
-    老行为一字不变——显式给了 --dir 就直接通过，不读库、不改动任何东西。
-    返回 False 表示既没给 --dir 也没有已配置通道（此时调用方应 return 2）。
-    """
-    if getattr(args, "dir", None):
-        return True
-    store = _open_store(args)
-    try:
-        if not store.netdisk:
-            print("尚未配置云盘通道：请先运行 membridge init，或用 --dir 指定同步文件夹。")
-            return False
-        args.dir = store.netdisk
-        return True
-    finally:
-        store.close()
-
-
 def _package_sync(args: argparse.Namespace) -> int:
     """包级双向同步：先取回他端记忆，再发布本机新记忆（v0.17 原逻辑）。"""
-    if not _fill_dir_from_netdisk(args):
-        return 2
     store = _open_store(args)
     passphrase = _resolve_passphrase(args, args.dir)
     tr = transport.FolderTransport(args.dir, store)
@@ -416,10 +395,7 @@ def cmd_netdisk_status(args: argparse.Namespace) -> int:
     """网盘三端直达体检（v0.18；v0.19 双网盘）。"""
     from . import netdisk_sync
 
-    if not _fill_dir_from_netdisk(args):
-        return 2
-    lines = netdisk_sync.status(args.dir)
-    for line in lines:
+    for line in netdisk_sync.status(args.dir):
         print(line)
     state = _load_netdisk_state(args.dir) if args.dir else None
     if state:
@@ -427,9 +403,6 @@ def cmd_netdisk_status(args: argparse.Namespace) -> int:
             role = conf.get("role", "")
             role_txt = f"，{'主通道' if role == 'primary' else '备胎'}" if role else ""
             print(f"本机接线状态：{provider} 已接线 → {conf['remote_path']}{role_txt}")
-    elif any("桌面客户端直连" in ln for ln in lines):
-        # v0.22：靠本机网盘客户端同步的不算故障，别让用户误以为通道没配好
-        print("本机接线状态：未用 rclone 接线（通道目录已由本机云盘客户端直接同步，无需接线）")
     else:
         print("本机接线状态：未接线")
     return 0
@@ -476,8 +449,6 @@ def cmd_netdisk_connect(args: argparse.Namespace) -> int:
 
 def cmd_netdisk_sync(args: argparse.Namespace) -> int:
     """网盘文件夹级双向 + 包级同步的完整一轮（v0.18）。"""
-    if not _fill_dir_from_netdisk(args):
-        return 2
     if not _netdisk_round(args):
         return 2
     return _package_sync(args)
@@ -811,7 +782,7 @@ def cmd_set_passphrase(args: argparse.Namespace) -> int:  # noqa: ARG001
     from .vault import save_passphrase, supported
 
     if not supported():
-        print("口令托管目前仅支持 Windows。")
+        print("此平台暂不支持自动同步口令托管（可显式传 --passphrase 手动同步）。")
         return 2
     store = MemoryStore(default_db_path())
     if not store.netdisk:
@@ -946,8 +917,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("sync",
                        help="一键双向同步：先取回其他设备记忆，再发布本机新记忆（v0.17）")
-    p.add_argument("--dir", default=None,
-                   help="同步文件夹（通道目录）；省略则用本机已配置的通道（v0.22）")
+    p.add_argument("--dir", required=True, help="同步文件夹（通道目录）")
     p.add_argument("--passphrase", default=None,
                    help="端到端加密口令（省略则用随通道同步的通道密钥）")
     p.add_argument("--plaintext", action="store_true", help="明文写入（不推荐，需显式确认）")
@@ -978,8 +948,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("netdisk-sync",
                        help="网盘文件夹级双向同步，随后链式跑包级 sync（三端自动双向的完整一轮）")
-    p.add_argument("--dir", default=None,
-                   help="同步文件夹（通道目录）；省略则用本机已配置的通道（v0.22）")
+    p.add_argument("--dir", required=True, help="同步文件夹（通道目录）")
     p.add_argument("--passphrase", default=None, help="端到端加密口令（省略则用通道密钥）")
     p.add_argument("--plaintext", action="store_true", help="明文写入（不推荐，需显式确认）")
     p.set_defaults(func=cmd_netdisk_sync)

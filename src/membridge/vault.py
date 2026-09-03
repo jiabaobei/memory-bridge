@@ -1,23 +1,34 @@
-"""口令保险库：自动同步的密钥托管（Windows DPAPI，绑定当前用户账户）。
+"""口令保险库：自动同步的密钥托管（绑定本机用户账户，全平台覆盖）。
 
 设计：用户只在 init 时输入一次云盘同步口令，此后由计划任务自动同步。
-口令用 Windows DPAPI（CryptProtectData，绑定当前用户）加密后存于记忆库
-meta——只有本机本用户能解，云盘上、其他账户、其他机器都解不开。
-零第三方依赖（纯 ctypes 调用系统 API），符合 ncnn 式零依赖坚守。
+口令加密后存于记忆库 meta——只有本机本用户能解，云盘上、其他账户、
+其他机器都解不开。零第三方依赖，符合 ncnn 式零依赖坚守。
 
-非 Windows 平台暂不支持自动同步口令托管（可显式传 --passphrase 手动同步）。
+平台分流（v0.22）：
+- Windows：DPAPI（CryptProtectData，绑定当前用户），纯 ctypes 调用系统 API。
+- Linux / macOS：文件保险库——密钥文件 `~/.membridge/vault.key`（32 随机
+  字节，目录 700 / 文件 600，绑定本机用户账户，与 DPAPI 的用户绑定同定位），
+  SHA-256 计数流加密。存储值带 `mbvault1:` 前缀，与 DPAPI 密文可区分。
+
+密钥文件丢失或损坏时视为「未托管」返回 None，不抛出——与 DPAPI 换用户/
+换机器时的降级路径一致。
 """
 
 from __future__ import annotations
 
 import base64
 import ctypes
+import hashlib
 import os
+import sys
+from pathlib import Path
 from typing import Optional
 
 from .store import MemoryStore
 
 _VAULT_KEY = "netdisk_key_vault"
+_FILE_PREFIX = "mbvault1:"  # 文件保险库密文前缀（区别于裸 base64 的 DPAPI 密文）
+_NONCE_LEN = 12
 _CRYPT32 = None
 _KERNEL32 = None
 
@@ -70,16 +81,87 @@ def _unprotect(blob: bytes) -> bytes:
         kernel32.LocalFree(blob_out.pbData)
 
 
+# ---------------------------------------------------------------------------
+# 文件保险库（Linux / macOS）
+# ---------------------------------------------------------------------------
+
+
+def _keyfile_path() -> Path:
+    override = os.environ.get("MEMBRIDGE_VAULT_DIR")
+    base = Path(override).expanduser() if override else Path.home() / ".membridge"
+    return base / "vault.key"
+
+
+def _load_key() -> Optional[bytes]:
+    try:
+        key = _keyfile_path().read_bytes()
+    except OSError:
+        return None
+    return key if len(key) == 32 else None  # 长度不对视为损坏
+
+
+def _ensure_key() -> bytes:
+    key = _load_key()
+    if key is not None:
+        return key
+    path = _keyfile_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)  # 目录只对本人开放
+    except OSError:
+        pass  # 个别文件系统不支持 chmod，不阻塞（文件权限仍收紧）
+    key = os.urandom(32)
+    path.write_bytes(key)
+    os.chmod(path, 0o600)
+    return key
+
+
+def _keystream(key: bytes, nonce: bytes, length: int) -> bytes:
+    out = bytearray()
+    counter = 0
+    while len(out) < length:
+        out += hashlib.sha256(key + nonce + counter.to_bytes(4, "big")).digest()
+        counter += 1
+    return bytes(out[:length])
+
+
+def _file_protect(data: bytes) -> str:
+    key = _ensure_key()
+    nonce = os.urandom(_NONCE_LEN)
+    ct = bytes(a ^ b for a, b in zip(data, _keystream(key, nonce, len(data))))
+    return _FILE_PREFIX + base64.b64encode(nonce + ct).decode("ascii")
+
+
+def _file_unprotect(raw: str) -> bytes:
+    payload = base64.b64decode(raw[len(_FILE_PREFIX):].encode("ascii"))
+    if len(payload) <= _NONCE_LEN:
+        raise OSError("文件保险库密文损坏")
+    key = _load_key()
+    if key is None:
+        raise OSError("文件保险库密钥缺失（密钥文件丢失或损坏）")
+    nonce, ct = payload[:_NONCE_LEN], payload[_NONCE_LEN:]
+    return bytes(a ^ b for a, b in zip(ct, _keystream(key, nonce, len(ct))))
+
+
+# ---------------------------------------------------------------------------
+# 对外接口
+# ---------------------------------------------------------------------------
+
+
 def supported() -> bool:
-    return os.name == "nt"
+    return os.name == "nt" or sys.platform in ("linux", "darwin")
 
 
 def save_passphrase(store: MemoryStore, passphrase: str) -> None:
     if not supported():
-        raise OSError("自动同步口令托管目前仅支持 Windows")
-    blob = _protect(passphrase.encode("utf-8"))
+        raise OSError("此平台暂不支持自动同步口令托管")
+    if os.name == "nt":
+        blob = _protect(passphrase.encode("utf-8"))
+        value = base64.b64encode(blob).decode("ascii")
+    else:
+        value = _file_protect(passphrase.encode("utf-8"))
     with store.transaction():
-        store._set_meta(_VAULT_KEY, base64.b64encode(blob).decode("ascii"))
+        store._set_meta(_VAULT_KEY, value)
 
 
 def clear_passphrase(store: MemoryStore) -> None:
@@ -97,6 +179,8 @@ def load_passphrase(store: MemoryStore) -> Optional[str]:
     if not raw:
         return None
     try:
+        if raw.startswith(_FILE_PREFIX):
+            return _file_unprotect(raw).decode("utf-8")
         return _unprotect(base64.b64decode(raw)).decode("utf-8")
     except Exception:
-        return None  # 换了用户/损坏：视为未设置，不抛出
+        return None  # 密钥缺失/换了用户/损坏：视为未设置，不抛出
