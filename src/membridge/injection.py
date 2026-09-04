@@ -13,6 +13,16 @@ v0.9 借鉴修订（极度省 token 原则的进一步落地）：
   约 56 token 而不重放 1410 token 历史"与 airllm"只载入当前需要的层"。
 - 沉默契约：没有可注入的高置信记忆时返回显式的"本轮不干预"标注
   （Meta Proactive Memory Agent：沉默也是动作），不硬凑弱命中。
+
+v0.26 借鉴修订（借鉴 Headroom 的可逆压缩 CCR 思想，只动注入视图不动记忆）：
+- 指针注入：预算装不下的高置信召回不再整体丢弃，改为一行句柄
+  `mb:#id 片段`——AI 觉得相关再 `membridge search "片段"` 取原文。
+  原文始终完整冻结在库里，注入块只是视图；每条从数百字节缩到几十字节。
+- 稳定前缀排序：区块顺序固定为 工作台（恒定）→ 全文条目（预算内）→
+  指针区（本轮检索的易变尾巴），稳定内容靠前以命中宿主的 KV-cache 前缀缓存。
+- 字节一致：指针行不带时间戳等渲染开销；检索融合同分按 node_id 定序
+  （retrieval.py），同输入恒同输出，前缀缓存命中率最大化。
+  低置信召回照旧一字不进（θ_c 过滤与沉默契约原样保留）。
 """
 
 from __future__ import annotations
@@ -29,6 +39,11 @@ CONFIDENCE_THRESHOLD = 0.3  # 论文中的 θ_c
 SILENCE_NOTE = "（记忆桥：本轮没有需要干预的记忆——保持沉默，不注入上下文）"
 
 _TRUNC_MARK = "…[原文截断]"
+
+# 指针区（v0.26）：每条句柄取正文前 POINTER_SNIPPET 字；指针区独立预算
+POINTER_SNIPPET = 40
+POINTER_BUDGET = 300
+POINTER_HEADER = "[指针区·需要原文时 membridge search \"片段\"]"
 
 
 def _fmt_line(n: MemoryNode, content: str, reason: str = "") -> str:
@@ -58,6 +73,9 @@ def serialize(
     （注入总额的 1/3，保底 WORKBENCH_BUDGET_MIN），恒定在场、不受沉默契约
     约束——接班第一眼看交接单，不需要"相关"才看。检索条目仍各守原有
     契约。超预算的工作台按原文前缀截断（截断 ≠ 改写）。
+
+    v0.26：预算装不下的高置信条目不再整体丢弃，转入指针区（一行句柄，
+    见模块 docstring）。预算内行为与 v0.25 逐字节一致。
     """
     eligible = [n for n in nodes if n.confidence >= CONFIDENCE_THRESHOLD]
     wb = (workbench or "").strip()
@@ -73,7 +91,8 @@ def serialize(
             wb = wb[: max(10, wb_budget - len(_TRUNC_MARK))] + _TRUNC_MARK
         lines.append(wb)
         used += len(wb) + 1
-    for n in eligible:
+    pointers: List[MemoryNode] = []
+    for idx, n in enumerate(eligible):
         reason = (reasons or {}).get(n.node_id, "")
         line = _fmt_line(n, n.content, reason)
         if used + len(line) <= max_chars:
@@ -83,10 +102,26 @@ def serialize(
         # 预算不足：注入原文前缀（剩余预算扣除标注与出处开销后全给正文）
         overhead = len(_fmt_line(n, "", reason)) + len(_TRUNC_MARK)
         keep = max_chars - used - overhead
-        if keep < 10:
-            break
-        lines.append(_fmt_line(n, n.content[:keep] + _TRUNC_MARK, reason))
+        if keep >= 10:
+            lines.append(_fmt_line(n, n.content[:keep] + _TRUNC_MARK, reason))
+        else:
+            pointers.append(n)  # 连截断都装不下：转指针（原先直接丢弃）
+        pointers.extend(eligible[idx + 1:])
         break
+    if pointers:
+        plines: List[str] = []
+        pused = 0
+        for p in pointers:
+            flat = " ".join(p.content.split())
+            snippet = flat[:POINTER_SNIPPET] + ("…" if len(flat) > POINTER_SNIPPET else "")
+            pl = f"- mb:#{p.node_id[:8]} {snippet}"
+            if pused + len(pl) + 1 > POINTER_BUDGET:
+                break
+            plines.append(pl)
+            pused += len(pl) + 1
+        if plines:
+            lines.append(POINTER_HEADER)
+            lines.extend(plines)
     lines.append("[记忆桥 · 跨设备记忆上下文 结束]")
     return "\n".join(lines)
 

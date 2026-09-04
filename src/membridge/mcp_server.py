@@ -23,7 +23,7 @@ from . import capabilities
 from .embeddings import Embedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
-from .retrieval import hybrid_search
+from .retrieval import search_with_reasons
 from .san import build_edges
 from .store import MemoryStore, default_db_path
 
@@ -108,7 +108,11 @@ def create_server(
     def memory_search(query: str, k: int = 5, as_context: bool = False,
                       budget: int = 0, scope: str = "") -> str:
         """检索记忆（三路混合，弱命中已过滤）；已知记忆在哪可用 scope 直达（如 tag:dev / kind:procedure / kind:handover）；as_context=true 返回带预算可注入块（最新交接卡恒定注入在工作台小节），无高质量命中明确告知不注入。"""
-        hits = hybrid_search(store, embedder, query, k=k, scope=scope)
+        # v0.26 修复：统一走 search_with_reasons——as_context 补传 reasons
+        # （v0.14 的召回理由标注此前只在 CLI 生效，MCP 侧丢失）
+        hits3 = search_with_reasons(store, embedder, query, k=k, scope=scope)
+        hits = [(n, s) for n, s, _ in hits3]
+        reasons = {n.node_id: why for n, _, why in hits3}
         if as_context:
             from .handoff import workbench, workbench_block
             from .injection import serialize
@@ -117,7 +121,7 @@ def create_server(
             nodes = (n for n, _ in hits
                      if not (active and n.node_id == active.node_id))
             return serialize(nodes, max_chars=budget or 1500,
-                             workbench=workbench_block(store))
+                             reasons=reasons, workbench=workbench_block(store))
         if not hits:
             return "（暂无相关记忆——本轮不注入，保持沉默）"
         return "\n".join(

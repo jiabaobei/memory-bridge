@@ -132,7 +132,9 @@ def search_with_reasons(
             seen = why.setdefault(n.node_id, [])
             if name not in seen:
                 seen.append(name)
-    fused = sorted(scores.items(), key=lambda t: t[1], reverse=True)[:k]
+    # v0.26 字节一致：同分按 node_id 定序——同输入恒同输出（借鉴 Headroom
+    # 压缩缓存的确定性承诺），跨端渲染出逐字节相同的注入块，前缀缓存可命中
+    fused = sorted(scores.items(), key=lambda t: (-t[1], t[0]))[:k]
     hits = [
         (nodes[nid], s, "+".join(why.get(nid, [])))
         for nid, s in fused

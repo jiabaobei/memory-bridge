@@ -195,3 +195,58 @@ def test_scope_miss_is_expected_not_a_gap():
     assert hits == []
     assert store.gap_queries() == []
     store.close()
+
+
+# ---------- v0.26 指针注入（借鉴 Headroom CCR）与字节一致 ----------
+
+def test_serialize_pointer_zone_for_overflow():
+    """指针注入：预算装不下的高置信召回不再整体丢弃，转为一行句柄；
+    第一个装不下的条目仍走原文前缀截断（优于指针），其后的条目转指针；
+    句柄片段必须是原文（空白折叠后）的连续前缀，且不带时间戳。"""
+    n1 = MemoryNode(content=COFFEE, embedding=[], confidence=1.0)
+    n2 = MemoryNode(content=DEPLOY_FAIL, embedding=[], confidence=1.0)
+    n3 = MemoryNode(content=MEETING, embedding=[], confidence=1.0)
+    tight = injection.serialize([n1, n2, n3], max_chars=110)
+    # 第一个装不下的 n2 仍注入原文前缀（截断 ≠ 改写）
+    assert injection._TRUNC_MARK in tight
+    # 其后的 n3 转指针（v0.25 会整体丢弃）
+    assert "mb:#" + n3.node_id[:8] in tight
+    assert injection.POINTER_HEADER in tight
+    # 指针行不含时间戳/出处（字节一致：排除一切渲染开销）
+    ptr_line = [ln for ln in tight.splitlines() if ln.startswith("- mb:#")][-1]
+    assert "来自" not in ptr_line and "场景" not in ptr_line
+    # 片段是原文的连续前缀（内容冻结守卫：指针也不改写）
+    flat = " ".join(MEETING.split())
+    assert ptr_line.split(" ", 2)[2].rstrip("…") == flat[:injection.POINTER_SNIPPET]
+
+
+def test_serialize_pointer_absent_when_budget_fits():
+    """预算充足时输出与旧版逐字节一致：不出现指针区。"""
+    n1 = MemoryNode(content=COFFEE, embedding=[], confidence=1.0)
+    assert injection.POINTER_HEADER not in injection.serialize([n1], max_chars=10000)
+
+
+def test_serialize_pointer_zone_silence_and_weak_unchanged():
+    """沉默契约与置信过滤一字未改：低置信召回不进指针区。"""
+    low = MemoryNode(content="低置信", embedding=[], confidence=0.1)
+    assert injection.serialize([low]) == injection.SILENCE_NOTE
+    good = MemoryNode(content=COFFEE, embedding=[], confidence=1.0)
+    block = injection.serialize([good, low], max_chars=10000)
+    assert "低置信" not in block and COFFEE in block
+
+
+def test_context_output_byte_identical_across_calls():
+    """字节一致端到端：同库同查询连续两次检索+序列化，输出逐字节相同
+    （record_access 只动热度元数据，不得泄漏进注入视图）。"""
+    store = _tmp_store()
+    emb = HashingEmbedder()
+    for text in (COFFEE, DEPLOY_FAIL, LATTE, MEETING):
+        n = MemoryNode(content=text, embedding=emb.embed(text), device="phone")
+        store.add(n)
+        build_edges(store, emb, only_new=n)
+    out1 = injection.serialize(
+        [n for n, _ in retrieval.hybrid_search(store, emb, "咖啡", k=5)])
+    out2 = injection.serialize(
+        [n for n, _ in retrieval.hybrid_search(store, emb, "咖啡", k=5)])
+    assert out1 == out2
+    store.close()

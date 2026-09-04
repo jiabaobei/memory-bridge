@@ -32,7 +32,7 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.25)
+## Status (v0.26)
 
 | Capability | Status |
 |---|---|
@@ -54,7 +54,7 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | **Markdown export view** — `membridge export` renders the whole store as human-readable Markdown (grouped by scene, sectioned by fact/procedure, with device/time provenance): **a read-only view that never writes back** — memories become auditable, git-friendly, portable | ✅ v0.10 |
 | **Resident recall hint** — `membridge recall-hint` prints a one-liner you may paste into CLAUDE.md / AGENTS.md: "recall before you answer" instead of "hope the agent remembers to search"; prints only, never edits host files | ✅ v0.10 |
 | **Hybrid retrieval + RRF** — three recall routes (vector + keyword for exact-literal matches + one-hop SAN graph) fused by Reciprocal Rank Fusion (k=60): multi-route consensus wins, nothing to tune | ✅ v0.9 |
-| **Budgeted injection + silence contract** — Path A blocks obey a token budget; the first over-budget entry is injected as a **prefix of the original text** (truncation ≠ rewriting — content freezing intact); when nothing passes the quality bar the tool says so ("no intervention this turn") instead of padding weak hits | ✅ v0.9 |
+| **Budgeted injection + silence contract** — Path A blocks obey a token budget; the first over-budget entry is injected as a **prefix of the original text** (truncation ≠ rewriting — content freezing intact); when nothing passes the quality bar the tool says so ("no intervention this turn") instead of padding weak hits; since v0.26 overflow recalls degrade to **one-line pointers** (`mb:#id snippet`, fetch full text via `search "snippet"` when needed, inspired by Headroom CCR — the source stays frozen in the store, only the injected view shrinks), with stable-prefix section ordering and byte-identical output for identical input to hit host KV-cache | ✅ v0.9 / v0.26 |
 | **Slim MCP tool descriptions** — each of the 3 tool descriptions compressed to one line: descriptions live in every client session, so this is where token savings start | ✅ v0.9 |
 | **Gap discovery** — zero-hit queries are logged locally (pure metadata) and surfaced by `doctor`: the system only reminds; what gets written is always the user's call | ✅ v0.9 |
 | **Optional `kind` tagging** — `fact` (stable facts) / `procedure` (what was tried, what happened); strictly optional | ✅ v0.9 |
