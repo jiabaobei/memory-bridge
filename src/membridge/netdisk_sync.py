@@ -37,6 +37,11 @@ import urllib.request
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+try:
+    from . import __version__ as _MB_VERSION
+except ImportError:  # 直接作为脚本运行时退化为绝对导入
+    from membridge import __version__ as _MB_VERSION
+
 _MARKER = ".membridge-bisync-initialized"
 _DOWNLOAD_URL = "https://downloads.rclone.org/rclone-current-linux-{arch}.zip"
 _TIMEOUT = 120
@@ -102,7 +107,7 @@ def install_rclone() -> Tuple[bool, str]:
     url = _DOWNLOAD_URL.format(arch=arch)
     tmp_zip = Path(os.environ.get("TMPDIR", "/tmp")) / "rclone-install.zip"
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "membridge/0.22.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": f"membridge/{_MB_VERSION}"})
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
             tmp_zip.write_bytes(resp.read())
         import zipfile
