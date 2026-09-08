@@ -2,6 +2,26 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.26.1] - 2026-09-04
+
+代码评审修复版：只修 bug，零功能变更。三原则不变——省 token / 简洁易上手 / **绝不动记忆本身**。
+
+### 修复
+- **自动同步在真实嵌入器下静默失效（严重）**：`sync_agent` 此前硬编码 `HashingEmbedder()` 的嵌入器指纹，用户配置了 OpenAI 嵌入器时，接收端会以 `embedder_mismatch` 拒收差分包——**不报错、只跳过**，是最难察觉的一类故障。现与 CLI 手动同步（sync / fetch）同一约定，改用 `capabilities.best_embedder()`
+- **跨设备补列把字符串默认值压成空串（严重）**：`schema.reconcile` 对所有字符串默认值生成 `DEFAULT ''`，使 `edges.kind` 补列后不是 `'semantic'`，与 `_migrate_columns` 的回填行为不一致，跨设备同步后边类型统计/注入出现偏差。现按 SQL 规则转义单引号后写入真值
+- `store._SCHEMA` 的 `nodes` 表补上 `kind` 列，不再每次建库都先建 11 列再 `ALTER` 补齐
+- `dss.apply_delta` 去掉事务外那次重复的 `embedder_id` 落库，对账拒绝的包不再留下半套元数据
+- `cli` 的 `--db` 默认值判断对齐 `default_db_path()`（旧判断比对的是早已不存在的 `"membridge.db"`，等于永远为真）
+- `cli` 去掉 `workbench_block` 的重复导入
+
+### 测试
+- 新增 `tests/test_schema.py`：`reconcile` 补列默认值守卫 + 未登记字段必须拒绝（登记表即白名单）
+- 全量 **124/143**：与 v0.26.0 基线 122/141 逐例比对，新增 2 例全绿、**零回归**；19 例失败为沙箱缺 rclone / schtasks 被安全策略拦截的环境限制，改动前后完全一致
+
+### 备注
+- 评审提出的「reconcile SQL 注入」经核实**不成立**：字段名必须先命中本地 `MIGRATIONS` 登记表才会执行 `ALTER`，登记表本身就是白名单，远程清单无法注入任意 SQL。已补注释与回归测试把这一约束固化下来，避免后人误改
+- 评审提出的「测试覆盖不足」亦不准确：仓库已有 13 个测试模块（含 `test_sync_agent` / `test_transport` / `test_v015_container`），本次只是补上 schema 对账这一块
+
 ## [0.26.0] - 2026-09-04
 
 注入层省 token 改版（借鉴 Headroom 的 CCR 可逆压缩思想，只动注入视图、绝不动记忆本体）。

@@ -19,10 +19,10 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from . import dss
+from . import capabilities, dss
 from . import channel as _channel
 from .dss import Delta
-from .embeddings import HashingEmbedder, embedder_identity
+from .embeddings import embedder_identity
 from .node import MemoryNode
 from .store import MemoryStore, default_db_path
 from .transport import FolderTransport
@@ -112,8 +112,12 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
         return 2
 
     tr = FolderTransport(netdisk, store)
+    # 与 CLI 手动同步（cli.py 的 sync / fetch 路径）同一约定：按环境选最优嵌入器。
+    # v0.26.1 修复：此前硬编码 HashingEmbedder，OpenAI 环境下自动同步会被
+    # 接收端以 embedder_mismatch 静默拒收（不报错、只跳过，最难察觉）
     delta = dss.delta_unsent(
-        store, tr._published_fps(), embedder_info=embedder_identity(HashingEmbedder())
+        store, tr._published_fps(),
+        embedder_info=embedder_identity(capabilities.best_embedder()),
     )
     published = 0
     if delta.nodes:

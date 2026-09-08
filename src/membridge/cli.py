@@ -86,8 +86,6 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 
 def cmd_context(args: argparse.Namespace) -> int:
-    from .handoff import workbench_block
-
     store = _open_store(args)
     hits = retrieval.search_with_reasons(
         store, capabilities.best_embedder(), args.query,
@@ -714,7 +712,7 @@ def cmd_gateway(args: argparse.Namespace) -> int:
     from .gateway import create_gateway_server, resolve_token, serve_gateway
     from .mcp_server import open_store
 
-    store = open_store(args.db if args.db != "membridge.db" else None)
+    store = open_store(args.db if args.db != default_db_path() else None)
     embedder = capabilities.best_embedder()
     token = resolve_token(store, token_arg=args.token,
                           env_token=os.environ.get("MEMBRIDGE_TOKEN"))
@@ -757,7 +755,7 @@ def cmd_gateway_token(args: argparse.Namespace) -> int:
     from .gateway import resolve_token
     from .mcp_server import open_store
 
-    store = open_store(args.db if args.db != "membridge.db" else None)
+    store = open_store(args.db if args.db != default_db_path() else None)
     token = resolve_token(store, env_token=os.environ.get("MEMBRIDGE_TOKEN"))
     store.close()
     print("网关访问口令（配置手机快捷指令 / 浏览器页面时使用）：")
@@ -780,8 +778,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 def cmd_init(args: argparse.Namespace) -> int:
     from .wizard import InitOptions, run_init
 
-    # 全局 --db 的默认值是 "membridge.db"；init 在未显式指定时应走智能默认
-    db = args.db if args.db != "membridge.db" else None
+    # --db 未显式指定时默认就是 default_db_path()；传 None 让下游走各自的智能默认
+    db = args.db if args.db != default_db_path() else None
     return run_init(
         InitOptions(
             db=db,
@@ -797,7 +795,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_autosync(args: argparse.Namespace) -> int:
     from .sync_agent import run_autosync
 
-    db = args.db if args.db != "membridge.db" else None
+    db = args.db if args.db != default_db_path() else None
     return run_autosync(store_path=db, passphrase=args.passphrase)
 
 

@@ -206,8 +206,8 @@ def apply_delta(store: MemoryStore, delta: Delta) -> Dict[str, Any]:
                 "local_fp": local.get("fp"),
                 "incoming_fp": incoming.get("fp"),
             }
-    if incoming and not local_id:
-        store._set_meta("embedder_id", json.dumps(incoming, ensure_ascii=False))
+    # embedder_id 落库统一收敛到下方事务内（v0.26.1 去重）：
+    # 对账拒绝的差分包不再留下半套元数据
 
     # v0.15 容器一致性对账：本端缺列就地补齐，无法补齐才拒绝并给出升级路径
     aligned: List[str] = []

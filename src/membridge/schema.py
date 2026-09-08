@@ -147,6 +147,7 @@ def reconcile(store, remote: Dict) -> Dict:
         ("edges", d["missing_edge_fields"]),
     ):
         for f in fields:
+            # 字段名必须命中本地迁移登记表——登记表即白名单，远程清单无法注入任意 SQL
             reg = MIGRATIONS.get(f"{table}.{f}")
             if not reg:
                 return {
@@ -163,7 +164,13 @@ def reconcile(store, remote: Dict) -> Dict:
                     ),
                 }
             _ver, typ, default = reg
-            lit = "''" if isinstance(default, str) else str(default)
+            # v0.26.1 修复：原先所有字符串默认值都被压成空串，导致 edges.kind
+            # 补列后是 DEFAULT '' 而非 'semantic'，与 _migrate_columns 的回填
+            # 行为不一致（跨设备同步后边类型统计/注入偏差）。单引号按 SQL 转义。
+            if isinstance(default, str):
+                lit = "'" + str(default).replace("'", "''") + "'"
+            else:
+                lit = str(default)
             store.conn.execute(
                 f"ALTER TABLE {table} ADD COLUMN {f} {typ} NOT NULL DEFAULT {lit}"
             )

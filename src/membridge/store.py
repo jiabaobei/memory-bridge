@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS nodes (
     confidence   REAL NOT NULL DEFAULT 1.0,
     created_at   REAL NOT NULL,
     last_access  REAL NOT NULL,
-    access_count INTEGER NOT NULL DEFAULT 0
+    access_count INTEGER NOT NULL DEFAULT 0,
+    kind         TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS edges (
     src      TEXT NOT NULL,
