@@ -357,30 +357,30 @@ def _package_sync(args: argparse.Namespace) -> int:
     return 0
 
 
-def _netdisk_state_path(local_dir: str) -> Path:
-    return Path(local_dir) / ".membridge-netdisk.json"
+def _netdisk_state_path(args: argparse.Namespace) -> Path:
+    """本机接线状态文件（v0.27：与库同目录，不再放通道目录里）。"""
+    from . import netdisk_sync
+
+    return netdisk_sync.state_path(getattr(args, "db", None))
 
 
-def _load_netdisk_state(local_dir: str) -> Optional[dict]:
+def _load_netdisk_state(args: argparse.Namespace) -> Optional[dict]:
     """接线状态按网盘分家登记：{provider: {remote_path, local_dir}}。
 
-    v0.18 旧格式（扁平 {"remote_path": ...}）按 OneDrive 兼容读入。
+    读不到本机文件时回落读通道里的老位置并迁回本机（v0.27）；v0.18 旧格式
+    （扁平 {"remote_path": ...}）按 OneDrive 兼容读入。
     """
-    p = _netdisk_state_path(local_dir)
-    try:
-        raw = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if isinstance(raw, dict) and "remote_path" in raw:
-        raw = {"onedrive": raw}
-    return raw or None
+    from . import netdisk_sync
+
+    return netdisk_sync.load_state(
+        getattr(args, "db", None), getattr(args, "dir", None)) or None
 
 
 def _netdisk_round(args: argparse.Namespace) -> bool:
     """文件夹级双向一轮（每家已接网盘各跑一次）；未接线给可读原因。"""
     from . import netdisk_sync
 
-    state = _load_netdisk_state(args.dir)
+    state = _load_netdisk_state(args)
     if not state:
         print("网盘未接线：先跑 membridge netdisk-connect --dir <本目录> 完成三步接线")
         return False
@@ -423,7 +423,7 @@ def cmd_netdisk_status(args: argparse.Namespace) -> int:
     lines = netdisk_sync.status(args.dir)
     for line in lines:
         print(line)
-    state = _load_netdisk_state(args.dir) if args.dir else None
+    state = _load_netdisk_state(args) if args.dir else None
     if state:
         for provider, conf in state.items():
             role = conf.get("role", "")
@@ -435,6 +435,25 @@ def cmd_netdisk_status(args: argparse.Namespace) -> int:
     else:
         print("本机接线状态：未接线")
     return 0
+
+
+def _share_wiring(args: argparse.Namespace, store, entry: Optional[dict]) -> None:
+    """把这次接好的这家网盘写进通道里的接线描述（v0.27；只写一次 + 凭据加密）。
+
+    其他端 init 时读到它就能自动接上，不必各自再配一遍。写者唯一 = 本机：
+    如果描述已由别的设备写下，本机只读、绝不覆盖（这就是「只写一次」）。
+    """
+    from . import netdisk_sync
+
+    if not entry:
+        return
+    _status, note = netdisk_sync.share_wiring(
+        args.dir, {args.provider: entry}, device=store.device_name,
+        passphrase=netdisk_sync.wiring_passphrase(
+            args.dir, getattr(args, "passphrase", None), create=True),
+        channel_id=store.channel_id or "")
+    if note:
+        print(note)
 
 
 def cmd_netdisk_connect(args: argparse.Namespace) -> int:
@@ -460,11 +479,17 @@ def cmd_netdisk_connect(args: argparse.Namespace) -> int:
     if result["stage"] == "done":
         # 主备分明（v0.20）：缺省坚果云=主通道，OneDrive=备胎（顶上用，不是淘汰）
         role = args.role or ("primary" if args.provider == "jianguoyun" else "backup")
-        netdisk_sync.record_state(args.dir, args.provider, args.remote, role)
+        netdisk_sync.record_state(args.dir, args.provider, args.remote, role,
+                                  db_path=args.db)
         store = _open_store(args)
         store.set_netdisk(args.dir)
         print(f"接线完成（{args.provider}，{'主通道' if role == 'primary' else '备胎'}）："
               "以后跑 membridge sync --netdisk 即三端自动双向")
+        # v0.27：把这次接好的这家写进通道里的接线描述（只写一次，凭据加密）,
+        # 其他端 init 读到即自动接上——「配一次，各端自动」的那一步。
+        _share_wiring(args, store, netdisk_sync.wiring_entry(
+            args.provider, args.remote, role, webdav_user=args.webdav_user,
+            webdav_pass=webdav_pass, token=token))
         return 0
     return 1 if result["stage"] not in ("need-token", "need-credential") else 0
 
@@ -485,8 +510,8 @@ def cmd_netdisk_disconnect(args: argparse.Namespace) -> int:
     provider = getattr(args, "provider", None)
     removed = netdisk_sync.remove_remote(provider)
     if args.dir:
-        state_path = _netdisk_state_path(args.dir)
-        state = _load_netdisk_state(args.dir)
+        state_path = _netdisk_state_path(args)
+        state = _load_netdisk_state(args)
         if provider and state and provider in state:
             del state[provider]
             if state:

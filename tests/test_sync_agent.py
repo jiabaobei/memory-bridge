@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
-from membridge import sync_agent, vault  # noqa: E402
+from membridge import netdisk_sync, sync_agent, vault  # noqa: E402
 from membridge.embeddings import HashingEmbedder, embedder_identity  # noqa: E402
 from membridge.node import MemoryNode  # noqa: E402
 from membridge.store import MemoryStore  # noqa: E402
@@ -198,7 +198,7 @@ def test_autosync_runs_folder_round_when_rclone_wired():
         store = _store("手机")
         chan = tempfile.mkdtemp()
         store.set_netdisk(chan)
-        (Path(chan) / ".membridge-netdisk.json").write_text(
+        netdisk_sync.state_path(store.path).write_text(
             json.dumps({"jianguoyun": {"remote_path": "membridge",
                                        "local_dir": chan, "role": "primary"}}),
             encoding="utf-8",
@@ -224,7 +224,7 @@ def test_autosync_skips_folder_round_without_remote():
         store = _store("手机")
         chan = tempfile.mkdtemp()
         store.set_netdisk(chan)
-        (Path(chan) / ".membridge-netdisk.json").write_text(
+        netdisk_sync.state_path(store.path).write_text(
             json.dumps({"onedrive": {"remote_path": "membridge",
                                      "local_dir": chan, "role": "backup"}}),
             encoding="utf-8",

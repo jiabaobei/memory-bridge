@@ -35,7 +35,7 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 try:
     from . import __version__ as _MB_VERSION
@@ -267,22 +267,72 @@ def remove_remote(provider: Optional[str] = None, config_path: Optional[Path] = 
 # 本机云盘目录探测（PC / Mac 零配置路径）
 # ---------------------------------------------------------------------------
 
+HOME_DIR: Optional[Path] = None  # 测试注入点（与 clients / wizard 同约定）
+
+
+def _home() -> Path:
+    """本机家目录；兼容既有注入点 `wizard.HOME_DIR`（v0.27 合并后单点实现）。"""
+    if HOME_DIR is not None:
+        return HOME_DIR
+    try:
+        from . import wizard
+
+        if wizard.HOME_DIR is not None:
+            return wizard.HOME_DIR
+    except ImportError:  # 直接作为脚本运行
+        pass
+    return Path.home()
+
+
+# 常见「文件夹同步型」网盘的本地同步根（检测到即提议作为通道宿主）。
+# 顺序即优先级：坚果云在前（WebDAV，全端可达）。v0.27：此前 wizard 与
+# netdisk_sync 各存一份候选表（迟早各自演化到不一致），现合并到此处。
+# 带 `*` 的候选按 glob 展开——坚果云 Windows 客户端的同步根在
+# `Nutstore/<账号序号>/我的坚果云` 下，直接匹配 `Nutstore` 只会拿到**容器**目录。
+SYNC_DRIVE_CANDIDATES: List[Tuple[str, Tuple[str, ...]]] = [
+    ("坚果云", ("~/我的坚果云", "~/坚果云同步盘", "~/Nutstore/*/我的坚果云",
+                "~/Nutstore Files")),
+    ("OneDrive", ("~/OneDrive",)),
+    ("百度网盘同步盘", ("~/百度网盘同步盘", "~/BaiduSyncdisk")),
+    ("iCloud 云盘", ("~/iCloudDrive", "~/iCloud Drive")),
+    ("Dropbox", ("~/Dropbox",)),
+    ("Google Drive", ("~/GoogleDrive", "~/Google Drive")),
+]
+
+# 无头 Linux 常见的挂载点（仅 OneDrive 有历史约定，保持原样不丢）
+_EXTRA_DRIVE_ROOTS = ("/mnt/onedrive", "/media/onedrive")
+
+
+def detect_sync_roots() -> List[Tuple[str, Path]]:
+    """本机已安装的同步盘及本地根目录 → [(网盘名, 同步根)]（v0.27 唯一实现）。
+
+    OneDrive 匹配家目录下所有 `OneDrive*` 根——同一网盘在不同设备上的本地根
+    目录名常常不同（`OneDrive - 个人` / `OneDrive - 公司`），但只要是同一账号
+    同步下来的，就是同一个通道宿主（v0.13）。
+    """
+    home = _home()
+    found: List[Tuple[str, Path]] = []
+    for name, patterns in SYNC_DRIVE_CANDIDATES:
+        hits: List[Path] = []
+        for pat in patterns:
+            base = pat[2:] if pat.startswith("~") else pat
+            if "*" in base:
+                hits += [q for q in sorted(home.glob(base)) if q.is_dir()]
+            else:
+                p = home / base if pat.startswith("~") else Path(pat)
+                if p.is_dir() and p not in hits:
+                    hits.append(p)
+        if name == "OneDrive":
+            hits += [q for q in sorted(home.glob("OneDrive*"))
+                     if q.is_dir() and q not in hits]
+            hits += [Path(p) for p in _EXTRA_DRIVE_ROOTS if Path(p).is_dir()]
+        found.extend((name, p) for p in hits)
+    return found
+
+
 def detect_local_drive_dirs() -> List[str]:
-    """返回本机已存在的 OneDrive / 坚果云同步目录候选（按平台惯例路径）。"""
-    home = Path.home()
-    candidates = []
-    if sys.platform == "win32":
-        profile = Path(os.environ.get("USERPROFILE", home))
-        candidates = ([profile / "OneDrive"] + sorted(profile.glob("OneDrive - *"))
-                      + [profile / "坚果云同步盘"] + sorted(profile.glob("Nutstore*")))
-    elif sys.platform == "darwin":
-        cloud = home / "Library" / "CloudStorage"
-        if cloud.exists():
-            candidates = sorted(cloud.glob("OneDrive*")) + sorted(cloud.glob("Nutstore*"))
-    else:
-        candidates = [home / "OneDrive", home / "Nutstore",
-                      Path("/mnt/onedrive"), Path("/media/onedrive")]
-    return [str(p) for p in candidates if p.is_dir()]
+    """薄门面：只要目录路径的调用方（connect / status / inside_drive_dir）用它。"""
+    return [str(p) for _, p in detect_sync_roots()]
 
 
 # ---------------------------------------------------------------------------
@@ -298,27 +348,165 @@ def _run_rclone(args: List[str], timeout: int = 600) -> subprocess.CompletedProc
     )
 
 
+STATE_FILE = "netdisk.json"
+_LEGACY_STATE_FILE = ".membridge-netdisk.json"
+
+
+def state_path(db_path: Optional[str] = None) -> Path:
+    """接线状态是「这台机器 + 这个库」的属性 → 与库同目录（v0.27）。
+
+    此前它叫 .membridge-netdisk.json 放在**通道目录**里，等于把本机状态写进
+    共享网盘：多端各接各家时是「读-改-写」，网盘并发下必然丢更新；而且条目里
+    还存着本机路径 local_dir（每端都不同的值）。现改回本机文件——通道里只留
+    **只写一次**的接线描述 `channel.wiring.json`（凭据加密）。
+    """
+    from .store import default_db_path
+
+    return Path(db_path or default_db_path()).parent / STATE_FILE
+
+
+def _read_state(path: Path) -> Optional[dict]:
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(raw, dict) and "remote_path" in raw:  # v0.18 旧格式兼容
+        raw = {"onedrive": raw}
+    return raw if isinstance(raw, dict) else None
+
+
+def _write_state(path: Path, data: dict) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)  # 先写临时文件再改名，避免读到半包
+    return path
+
+
+def load_state(db_path: Optional[str] = None,
+               channel_root: Optional[str] = None) -> dict:
+    """读本机接线状态 {provider: {remote_path, local_dir, role}}。
+
+    本机文件读不到时，回落读老位置（通道目录里的 .membridge-netdisk.json）并
+    就地迁移到本机——老用户零动作升级。通道里的老文件**不动**：其他设备可能
+    还在读它，删除是不可逆的破坏。
+    """
+    data = _read_state(state_path(db_path))
+    if data is not None:
+        return data
+    if channel_root:
+        data = _read_state(Path(channel_root) / _LEGACY_STATE_FILE)
+        if data is not None:
+            try:
+                _write_state(state_path(db_path), data)
+            except OSError:
+                pass
+            return data
+    return {}
+
+
 def record_state(local_dir: str, provider: str, remote_path: str,
-                 role: Optional[str] = None) -> Path:
+                 role: Optional[str] = None,
+                 db_path: Optional[str] = None) -> Path:
     """接线状态按家登记（v0.25 抽出：CLI 与向导共用）。
 
     role 主备分明（v0.20）：primary=主通道，backup=备胎；缺省不写角色。
+    local_dir 仍记进条目（本机的通道目录，供 netdisk-status 展示）。
     """
-    path = Path(local_dir) / ".membridge-netdisk.json"
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(raw, dict) and "remote_path" in raw:  # v0.18 旧格式兼容
-            raw = {"onedrive": raw}
-    except (OSError, ValueError):
-        raw = {}
-    if not isinstance(raw, dict):
-        raw = {}
+    path = state_path(db_path)
+    raw = load_state(db_path, local_dir)
     entry = {"remote_path": remote_path, "local_dir": local_dir}
     if role:
         entry["role"] = role
     raw[provider] = entry
-    path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
-    return path
+    return _write_state(path, raw)
+
+
+def wiring_entry(provider: str, remote_path: str, role: Optional[str] = None,
+                 webdav_user: Optional[str] = None,
+                 webdav_pass: Optional[str] = None,
+                 token: Optional[str] = None) -> dict:
+    """把「刚接好的这家」整理成可写进通道描述的条目（v0.27）。
+
+    字段名与 connect() 的关键字参数一一对应，消费端直接展开调用——少一层翻译
+    就少一处能对不上的地方。没拿到凭据时只记非密字段（条目仍有用：告诉别端
+    该接哪家、远端子路径是什么）。
+    """
+    entry: dict = {"remote_path": remote_path}
+    if role:
+        entry["role"] = role
+    if provider == "jianguoyun" and webdav_user and webdav_pass:
+        entry["webdav_user"] = webdav_user
+        entry["webdav_pass"] = webdav_pass
+    elif provider == "onedrive" and token:
+        try:  # 坏 token 别广播出去：写进通道的凭据必须当场是能用的
+            json.loads(token if isinstance(token, str) else json.dumps(token))
+        except ValueError:
+            return entry
+        entry["token"] = token
+    return entry
+
+
+def wiring_kwargs(entry: dict) -> dict:
+    """描述条目 → connect() 关键字参数（消费端唯一入口）。"""
+    return {k: entry.get(k) for k in ("token", "webdav_user", "webdav_pass")}
+
+
+def wiring_passphrase(chan: str, explicit: Optional[str] = None,
+                      create: bool = False) -> Optional[str]:
+    """接线描述的口令回落链：显式口令 / 环境变量 → 通道密钥（v0.27）。
+
+    与差分包同一条链。同一台设备用两把钥匙往一条通道里写东西，正是 v0.17
+    记下的那次「静默分裂」——接线描述上不能重演。写入端 create=True（没有
+    密钥就生成），读取端 create=False（只读不建，老通道不该被悄悄换钥匙）。
+    """
+    from . import channel
+
+    p = explicit or os.environ.get("MEMBRIDGE_PASSPHRASE")
+    if p:
+        return p
+    try:
+        return channel.ensure_key(chan, create=create)
+    except OSError:
+        return None
+
+
+_WIRING_NOTES = {
+    "created": "🔗 接线描述已写入通道（凭据加密）——"
+               "其他设备 init 时自动接上，不必再配一遍",
+    "updated": "🔗 接线描述已更新（本机补写）",
+    "skipped": "🔗 通道里已有接线描述（写者「{by}」），本机只读不改动",
+    "nocrypto": "⚠️ 没拿到通道钥匙，接线描述未写入（绝不落明文凭据）",
+    "failed": "⚠️ 接线描述写入未成功，不影响本机同步",
+    "absent": "⚠️ 通道目录不存在，接线描述未写入",
+    "empty": "",
+}
+
+
+def share_wiring(chan: str, entries: Dict[str, dict], device: str,
+                 passphrase: Optional[str] = None,
+                 channel_id: str = "") -> Tuple[str, str]:
+    """把「本机刚接好的家」并进通道接线描述并写一次；返回 (status, 一句人话)。
+
+    CLI 与向导共用这一处合并 + 状态判定——两处各写一遍，迟早有一处漏掉新状态。
+    写者唯一由 channel.write_wiring 保证（已由别端写下则本机只读）。
+    """
+    from . import channel
+
+    if not entries:
+        return "empty", ""
+    if passphrase is None:
+        passphrase = wiring_passphrase(chan)
+    cur = channel.read_wiring(chan, passphrase)
+    merged = dict(cur["entries"]) if cur["status"] == "ok" else {}
+    merged.update(entries)
+    _path, status = channel.write_wiring(
+        chan, merged, passphrase=passphrase, device=device, channel_id=channel_id)
+    note = _WIRING_NOTES.get(status, "")
+    if note:
+        note = note.format(by=cur["meta"].get("written_by", "?"))
+    return status, note
 
 
 def _resolve_jianguoyun_subroot(p: dict, remote_path: str) -> str:

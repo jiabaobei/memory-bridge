@@ -28,15 +28,7 @@ STATUS_MARK = {
 }
 
 # 常见"文件夹同步型"网盘的本地同步根目录（检测到即提议作为通道宿主）
-SYNC_DRIVE_CANDIDATES: List[Tuple[str, Tuple[str, ...]]] = [
-    ("坚果云", ("~/我的坚果云", "~/Nutstore Files")),
-    ("OneDrive", ("~/OneDrive",)),
-    ("百度网盘同步盘", ("~/百度网盘同步盘", "~/BaiduSyncdisk")),
-    ("iCloud 云盘", ("~/iCloudDrive", "~/iCloud Drive")),
-    ("Dropbox", ("~/Dropbox",)),
-    ("Google Drive", ("~/GoogleDrive", "~/Google Drive")),
-]
-
+# v0.27：候选表与扫描实现已并入 netdisk_sync（此前两处各存一份，迟早不一致）。
 FREE_CLOUD_GUIDE = (
     "   未检测到同步盘。任选一款免费云盘即可（按论文 §4.5 测算：单用户记忆一年仅约\n"
     "   1GB、日写入约 5MB，任何免费额度都绰绰有余）：\n"
@@ -68,29 +60,13 @@ def _home() -> Path:
 def detect_sync_roots() -> List[Tuple[str, Path]]:
     """识别本机已安装的同步盘及其本地同步根目录。
 
-    v0.13：OneDrive 匹配家目录下所有 `OneDrive*` 根（OneDrive - 个人 /
-    OneDrive - 公司 等）——同一个云盘在不同设备上的本地根目录名常常
-    不同，但只要是同一账号同步下来的，就是同一个通道宿主。
+    v0.27：唯一实现已并入 `netdisk_sync.detect_sync_roots`（候选表 + 扫描 +
+    OneDrive 多变体根目录），这里只是薄门面——`wizard.HOME_DIR` 仍是本文件的
+    注入点，由 `netdisk_sync._home()` 兼容读取，既有调用方与测试不必改。
     """
-    found: List[Tuple[str, Path]] = []
-    home = _home()
-    for name, patterns in SYNC_DRIVE_CANDIDATES:
-        if name == "OneDrive":
-            try:
-                hits = sorted(
-                    p for p in home.iterdir()
-                    if p.is_dir() and p.name.lower().startswith("onedrive")
-                )
-            except OSError:
-                hits = []
-            found.extend((name, p) for p in hits)
-            continue
-        for pat in patterns:
-            p = Path(pat.replace("~", str(home), 1)) if pat.startswith("~") else Path(pat)
-            if p.is_dir():
-                found.append((name, p))
-                break
-    return found
+    from . import netdisk_sync
+
+    return netdisk_sync.detect_sync_roots()
 
 
 @dataclass
@@ -159,12 +135,15 @@ def _register_posix_autosync(out) -> None:
             out(f"   ⚠️ LaunchAgent 注册失败：{exc}")
 
 
-def guided_netdisk_setup(out, ask_fn=None, secret_fn=None):
+def guided_netdisk_setup(out, ask_fn=None, secret_fn=None, on_connect=None):
     """v0.25 第一步引导接线（交互式「提示框」）：安心文案 → 逐步配坚果云主通道
     （连接达标才继续）→ 顺问 OneDrive 备胎（可跳过）。
 
     返回 (通道目录, 是否稍后配置, [(provider, 远端子路径, 角色)])。
     未达标且用户选稍后：(None, True, [])——门槛留一个明确出口，不拦安装。
+
+    v0.27：`on_connect(provider, 远端子路径, 角色, 凭据dict)` 在每家接好时回调
+    ——调用方用它把凭据写进通道接线描述（凭据不能进返回值：那会出现在日志/打印里）。
     """
     import getpass
 
@@ -193,6 +172,9 @@ def guided_netdisk_setup(out, ask_fn=None, secret_fn=None):
         if result.get("ok"):
             out("   ✅ 主通道连接达标：坚果云三步接线完成，继续安装")
             connected = [("jianguoyun", "membridge", "primary")]
+            if on_connect:
+                on_connect("jianguoyun", "membridge", "primary",
+                           {"webdav_user": user, "webdav_pass": secret})
             break
         out(f"   ⚠️ 连接未达标：{result.get('detail', '')[:200]}")
     if not connected:
@@ -209,9 +191,51 @@ def guided_netdisk_setup(out, ask_fn=None, secret_fn=None):
             if r2.get("ok"):
                 out("   ✅ 备胎接好：坚果云出问题时 OneDrive 顶上")
                 connected.append(("onedrive", "membridge", "backup"))
+                if on_connect:
+                    on_connect("onedrive", "membridge", "backup",
+                               {"token": token})
             else:
                 out(f"   ⚠️ 备胎未接（不影响主通道）：{r2.get('detail', '')[:200]}")
     return chan, False, connected
+
+
+def adopt_wiring(netdisk: str, store, out) -> List[str]:
+    """按通道里的接线描述，把本机还没接的网盘自动接上（v0.27）。
+
+    描述由**首次配置那台设备**写下（只写一次），本机只读。这就是「电脑端配好了，
+    手机 / 网页端不必再配一遍」那一步：端上装上同一个云盘客户端、跑一次 init 即可。
+
+    拿不到钥匙 / 描述不存在 / 本机早已接好 / 那家凭据没带上——都只是少接一家，
+    绝不阻断安装。返回本次自动接上的 provider 列表。
+    """
+    from . import channel, netdisk_sync
+
+    wiring = channel.read_wiring(netdisk, netdisk_sync.wiring_passphrase(netdisk))
+    if wiring["status"] == "locked":
+        out("   🔒 通道里有接线描述，但本机拿不到钥匙——"
+            "运行 membridge show-passphrase 查看后重跑 init")
+        return []
+    if wiring["status"] != "ok":
+        return []
+    have = netdisk_sync.load_state(store.path, netdisk)
+    done: List[str] = []
+    for provider, entry in sorted(wiring["entries"].items()):
+        if provider in have:
+            continue  # 本机已经接好这家，别动
+        remote_path = entry.get("remote_path") or "membridge"
+        result = netdisk_sync.connect(netdisk, remote_path, provider=provider,
+                                      **netdisk_sync.wiring_kwargs(entry))
+        if not result.get("ok"):
+            out(f"   ⚠️ 通道描述里的「{provider}」本机未接上："
+                f"{result.get('detail', '')[:120]}")
+            continue
+        netdisk_sync.record_state(netdisk, provider, remote_path,
+                                  entry.get("role"), db_path=store.path)
+        have[provider] = {}
+        done.append(provider)
+        out(f"   🔗 已按通道描述自动接上「{provider}」"
+            f"（{entry.get('role') or '未标角色'}）——本机无需再配一遍")
+    return done
 
 
 def run_init(opts: InitOptions, out=print) -> int:
@@ -224,6 +248,13 @@ def run_init(opts: InitOptions, out=print) -> int:
     netdisk = opts.netdisk_dir
     skipped = False
     pending: List[Tuple[str, str, str]] = []
+    # v0.27：引导接线时当场收到的凭据——只为写进通道接线描述，绝不打印/记录
+    wired: List[dict] = []
+
+    def _collect(provider, remote_path, role, creds):
+        wired.append({"provider": provider, "remote_path": remote_path,
+                      "role": role, "creds": creds})
+
     if opts.skip_netdisk:
         skipped = True
     elif netdisk is None:
@@ -238,7 +269,8 @@ def run_init(opts: InitOptions, out=print) -> int:
         elif interactive:
             # v0.25：未检测到时走交互式引导接线——连接达标才继续安装，
             # 留「稍后配置」明确出口（门槛不拦安装）
-            netdisk, skipped, pending = guided_netdisk_setup(out)
+            netdisk, skipped, pending = guided_netdisk_setup(
+                out, on_connect=_collect)
         else:
             skipped = True
             out(FREE_CLOUD_GUIDE)
@@ -267,13 +299,13 @@ def run_init(opts: InitOptions, out=print) -> int:
     store.set_device(device)
 
     if netdisk:
+        from . import netdisk_sync
+
         FolderTransport(netdisk, store)
         store.set_netdisk(netdisk)
         out(f"\n☁️ 云盘通道已配置（必做项完成）：{netdisk}")
         for prov, rpath, role in pending:  # v0.25 引导接线的各家登记
-            from . import netdisk_sync
-
-            netdisk_sync.record_state(netdisk, prov, rpath, role)
+            netdisk_sync.record_state(netdisk, prov, rpath, role, db_path=store.path)
 
         # 通道身份（v0.13）：通道文件夹里已有 channel.json（其他设备先到）
         # → 认领同一通道；否则由本设备创建，其他设备以后自动认领。
@@ -287,6 +319,22 @@ def run_init(opts: InitOptions, out=print) -> int:
         elif status == "created":
             out(f"   🔗 已创建通道「{store.channel_id}」——"
                 "其他设备运行 membridge init 检测到这个文件夹时会自动认领")
+
+        # v0.27：把本次引导接线收到的凭据写进通道接线描述（只写一次 + 凭据加密），
+        # 再按描述把本机还没接的网盘自动补齐——「一处配置，各端自动」的那一步。
+        if wired:
+            entries = {
+                w["provider"]: netdisk_sync.wiring_entry(
+                    w["provider"], w["remote_path"], w["role"], **w["creds"])
+                for w in wired
+            }
+            _st, note = netdisk_sync.share_wiring(
+                netdisk, entries, device=store.device_name,
+                passphrase=netdisk_sync.wiring_passphrase(netdisk, create=True),
+                channel_id=store.channel_id or "")
+            if note:
+                out("   " + note)
+        adopt_wiring(netdisk, store, out)
 
         # 同步口令由系统自动生成并托管进本机保险库——用户无需设置、无需记住。
         # 配对新设备时用 membridge show-passphrase 查看（AI 替用户记住）。

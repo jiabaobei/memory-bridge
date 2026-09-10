@@ -249,3 +249,105 @@ def roster(root: str) -> List[Dict]:
             out.append(rec)
     out.sort(key=lambda r: r.get("last_seen", ""), reverse=True)
     return out
+
+
+# ---------------- v0.27：通道接线描述（只写一次，凭据加密） ----------------
+
+WIRING_FILE = "wiring.json"
+WIRING_FMT = "membridge-wiring-enc-v1"
+WIRING_VERSION = 1
+_WIRING_META = ("wiring_version", "written_by", "written_at", "channel_id")
+
+
+def wiring_path(root: str) -> str:
+    return os.path.join(root, WIRING_FILE)
+
+
+def read_wiring(root: str, passphrase: Optional[str] = None) -> Dict:
+    """读取通道里的接线描述，返回 {"status", "meta", "entries"}。
+
+    status ∈ ok / absent（老通道还没有）/ locked（拿不到钥匙）/ broken（文件损坏）。
+
+    描述只在首次配置时由**一台**设备写下，其余设备只读——所以它没有共享可写
+    状态，网盘上也不会出现 "wiring (1).json" 这类冲突副本（与 devices/ 心跳同约定）。
+    明文部分只有写者/时间/版本这些元数据；**凭据整块加密**（见 write_wiring）。
+    """
+    try:
+        with open(wiring_path(root), "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return {"status": "absent", "meta": {}, "entries": {}}
+    except (OSError, ValueError):
+        return {"status": "broken", "meta": {}, "entries": {}}
+    if not isinstance(raw, dict):
+        return {"status": "broken", "meta": {}, "entries": {}}
+    meta = {k: raw[k] for k in _WIRING_META if raw.get(k) is not None}
+    if raw.get("fmt") != WIRING_FMT or not raw.get("token"):
+        return {"status": "broken", "meta": meta, "entries": {}}
+    if not passphrase:
+        return {"status": "locked", "meta": meta, "entries": {}}
+    try:
+        # 与差分包同一条加密链（Fernet + PBKDF2，随机盐随文件携带），
+        # 延迟导入：transport 在模块层 import 本模块，此处不能反过来。
+        from .transport import PassphraseCryptor
+
+        cryptor = PassphraseCryptor(
+            passphrase, salt=bytes.fromhex(raw.get("salt", "")))
+        entries = json.loads(cryptor.decrypt(raw["token"]))
+    except Exception:  # 缺 cryptography / 盐损坏 / 钥匙不符 —— 一律按「打不开」
+        return {"status": "locked", "meta": meta, "entries": {}}
+    return {"status": "ok", "meta": meta,
+            "entries": entries if isinstance(entries, dict) else {}}
+
+
+def write_wiring(root: str, entries: Dict, passphrase: Optional[str],
+                 device: str, channel_id: str = "") -> Tuple[Optional[str], str]:
+    """写入通道接线描述（**只写一次**：写者唯一 = 干这次配置的那台设备）。
+
+    返回 (路径, status)，status ∈
+      created   本机首次写入
+      updated   本机后续补写（同一台设备再接一家网盘）
+      skipped   **已经由别的设备写下** → 本机只读，绝不覆盖（这就是「只写一次」）
+      nocrypto  拿不到钥匙，加密不可用 → **不写**（绝不落明文凭据）
+      empty/absent/failed  无内容 / 通道目录不存在 / 写盘失败
+
+    凭据用的是项目既有的口令端到端加密链（与差分包同实现、同约定）：网盘服务商
+    只见密文。信任边界与 channel.key 同级——若用户在网盘里放的是通道密钥，能读到
+    密钥的人也能解开；需要严格端到端时另设 --passphrase，此时口令优先。
+    """
+    if not entries:
+        return None, "empty"
+    if not os.path.isdir(root):
+        return None, "absent"
+    meta = read_wiring(root)["meta"]  # 只读明文元数据，不解密
+    if meta.get("written_by") and meta["written_by"] != device:
+        return None, "skipped"
+    if not passphrase:
+        return None, "nocrypto"
+    try:
+        from .transport import PassphraseCryptor
+
+        cryptor = PassphraseCryptor(passphrase)
+    except Exception:  # 缺 cryptography：宁可少写一个文件，也不落明文凭据
+        return None, "nocrypto"
+    body = json.dumps(
+        {
+            "fmt": WIRING_FMT,
+            "wiring_version": WIRING_VERSION,
+            "written_by": device,
+            "written_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "channel_id": channel_id,
+            "salt": cryptor.salt.hex(),
+            "token": cryptor.encrypt(json.dumps(entries, ensure_ascii=False)),
+        },
+        ensure_ascii=False, indent=2,
+    )
+    final = wiring_path(root)
+    tmp = final + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(body)
+        os.replace(tmp, final)  # 先写临时文件再改名，避免网盘读到半包
+    except OSError:
+        return None, "failed"
+    return final, ("updated" if meta else "created")

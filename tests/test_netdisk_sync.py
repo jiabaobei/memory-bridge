@@ -250,7 +250,7 @@ def test_connect_default_roles_primary_backup():
                             "webdav_pass": "pw", "drive_dir": None,
                             "db": str(tmp / "mem.db"), "device": None})()
         assert cli.cmd_netdisk_connect(ns) == 0
-        state = json.loads((local / ".membridge-netdisk.json").read_text(encoding="utf-8"))
+        state = json.loads(netdisk_sync.state_path(ns.db).read_text(encoding="utf-8"))
         assert state["jianguoyun"]["role"] == "primary"
 
         ns2 = type("A", (), {"dir": str(local), "remote": "membridge",
@@ -259,7 +259,7 @@ def test_connect_default_roles_primary_backup():
                              "webdav_pass": None, "drive_dir": None,
                              "db": str(tmp / "mem.db"), "device": None})()
         assert cli.cmd_netdisk_connect(ns2) == 0
-        state = json.loads((local / ".membridge-netdisk.json").read_text(encoding="utf-8"))
+        state = json.loads(netdisk_sync.state_path(ns2.db).read_text(encoding="utf-8"))
         assert state["onedrive"]["role"] == "backup"
         assert state["jianguoyun"]["role"] == "primary"  # 按家登记互不覆盖
     finally:
@@ -439,7 +439,7 @@ def test_connect_state_stores_remote_subpath_not_local_dir():
         with contextlib.redirect_stdout(buf):
             rc = cli.cmd_netdisk_connect(a)
         assert rc == 0
-        state = json.loads((chan / ".membridge-netdisk.json").read_text(encoding="utf-8"))
+        state = json.loads(netdisk_sync.state_path(str(db)).read_text(encoding="utf-8"))
         assert state["jianguoyun"]["remote_path"] == "membridge"
         assert state["jianguoyun"]["local_dir"] == str(chan)
     finally:
