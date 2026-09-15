@@ -242,7 +242,10 @@ def _resolve_passphrase(
     create=False 用于取回侧：通道里本就没有密钥时不新建（那是老式口令通道）。
     """
     p = args.passphrase or os.environ.get("MEMBRIDGE_PASSPHRASE")
-    if p or not root or getattr(args, "plaintext", False):
+    if p:
+        _note_env_shadow(args, root, p)
+        return p
+    if not root or getattr(args, "plaintext", False):
         return p  # 显式明文 = 明确放弃加密，此时不再生成/使用通道密钥
     from . import channel
 
@@ -250,6 +253,34 @@ def _resolve_passphrase(
         return channel.ensure_key(root, create=create)
     except OSError:
         return None
+
+
+def _note_env_shadow(
+    args: argparse.Namespace, root: Optional[str], passphrase: str
+) -> None:
+    """诊断（v0.27.1）：环境变量盖住通道密钥时，一句话点明根因。
+
+    优先级不动——显式口令 = 用户要严格端到端，v0.17 契约如此。问题在于环境变量
+    常是迁移后忘了清的旧口令：它一盖住通道密钥，取回侧只会报「口令不匹配」，
+    而 show-passphrase 显示的正是那个错口令，用户查不出根因。只在两者不一致时
+    提示一句，且只打指纹、不打印口令本体。
+    """
+    if getattr(args, "passphrase", None) or not root:
+        return  # 显式 --passphrase 是当次意图，不算"被环境变量盖住"
+    from . import channel
+
+    try:
+        key = channel.ensure_key(root, create=False)  # 只读不建，不碰老通道
+    except OSError:
+        return
+    if key and key != passphrase:
+        print(
+            "⚠️ 环境变量 MEMBRIDGE_PASSPHRASE（指纹 …"
+            f"{channel.key_fingerprint(passphrase)}）盖住了通道密钥（指纹 …"
+            f"{channel.key_fingerprint(key)}），本次按环境变量加解密。"
+            "若报「口令不匹配」，清掉它重跑即可："
+            "env -u MEMBRIDGE_PASSPHRASE <原命令>"
+        )
 
 
 def cmd_publish(args: argparse.Namespace) -> int:

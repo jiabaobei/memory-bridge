@@ -315,3 +315,60 @@ def test_channel_cli_warns_desktop_only_host():
     with contextlib.redirect_stdout(buf):
         rc = cli.cmd_channel(type("A", (), {"db": db_path, "device": None})())
     assert rc == 0 and "不可达" in buf.getvalue()
+
+
+def test_env_passphrase_shadowing_is_diagnosed():
+    """v0.27.1：环境变量盖住通道密钥时要说明是谁盖的。
+
+    真机暴露：环境变量常是迁移后忘了清的旧口令，一盖住通道密钥，取回侧只会跳过
+    差分包报「口令不匹配」，而提示里的 show-passphrase 显示的正是那个错口令——
+    用户照着查只会更迷。本用例只验"说得清"，不验优先级：显式口令优先是 v0.17
+    契约，本次一字未改。
+    """
+    import argparse
+
+    tmp = tempfile.TemporaryDirectory()
+    root = os.path.join(tmp.name, "chan")
+    key = channel.ensure_key(root)  # 通道自带的钥匙
+    stale = key + "-迁移前的旧口令"
+
+    def resolve(env, explicit=None):
+        ns = argparse.Namespace(passphrase=explicit)
+        saved = os.environ.get("MEMBRIDGE_PASSPHRASE")
+        if env is None:
+            os.environ.pop("MEMBRIDGE_PASSPHRASE", None)
+        else:
+            os.environ["MEMBRIDGE_PASSPHRASE"] = env
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                out = cli._resolve_passphrase(ns, root)
+        finally:
+            if saved is None:
+                os.environ.pop("MEMBRIDGE_PASSPHRASE", None)
+            else:
+                os.environ["MEMBRIDGE_PASSPHRASE"] = saved
+        return out, buf.getvalue()
+
+    # ① 与通道密钥不一致 → 警示，并给出退出路径
+    got, log = resolve(stale)
+    assert got == stale, "显式设了环境变量就该用它（v0.17 优先级契约不变）"
+    assert "盖住了通道密钥" in log and "口令不匹配" in log
+    assert "env -u MEMBRIDGE_PASSPHRASE" in log
+
+    # ② 一致 → 闭嘴，不打扰
+    got, log = resolve(key)
+    assert got == key and log.strip() == ""
+
+    # ③ 未设环境变量 → 走通道密钥，同样不该有警示
+    got, log = resolve(None)
+    assert got == key and log.strip() == ""
+
+    # ④ 显式 --passphrase 是当次意图，不算"被环境变量盖住"
+    got, log = resolve(stale, explicit="本次显式口令")
+    assert got == "本次显式口令" and log.strip() == ""
+
+    # ⑤ 密钥与口令本体绝不落进输出（只说指纹）
+    _, log = resolve(stale)
+    assert stale not in log and key not in log
+    assert channel.key_fingerprint(key) in log
