@@ -2,6 +2,25 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.28.1] - 2026-09-16
+
+「让技能知道自己会什么」：技能模板补齐全量命令面，并加一条测试把这件事焊死，防止缺口再长回来。
+
+### 修复
+- **技能模板漏了 21 个命令**。`SKILL.md` 由 `skill_template.py` 的 `SKILL_MD` 常量生成，但模板只写了 9 个命令，`cli.py` 实际有 30 个——`lint`（v0.28.0 刚加的）与 20 个历史命令都没进模板。后果很具体：**agent 装了技能也不知道这些能力存在**，等于白做。现已按真实 `--help` 输出补齐全部 30 个命令，按场景分组（日常读写 / 交接班 / 同步 / 网盘 / 体检 / 接入 / 口令）。
+- **模板措辞与实现对齐**：`--kind` 的合法取值明确为 `fact` / `procedure` / `handover`；`delta` 与 `preload` 的用法按实际签名写（前者吃位置参数 `remote_db`，后者吃位置参数 `target`，都不是 `--device`）。核实过 `lint --json` 与 `lint --fix-structure` **不互斥**（前者只换输出格式，修复照常生效，JSON 里 `fixed_edges` 如实报告），此前的描述已按事实改写。
+- **`skill_template.py` 模块文档修正**：原注释称「仓库内的 `skills/memory-bridge/SKILL.md` 与本常量保持一致」，但该目录**并不存在**。改为指向真实消费者 `clients.py` 的 `SkillInstaller`。
+
+### 新增
+- **测试 `test_skill_template_covers_every_cli_subcommand`**：从 `cli.py` 解析出全部子命令，强制要求模板覆盖，并**反向检查模板不得出现 CLI 里不存在的命令**（防手误拼错）。这是本次真正的结构性修复——缺口之所以能积累到 21 个，是因为「加命令」和「改模板」靠人记得做两处；现在漏一处就测试失败。
+
+### 说明
+- 本次不含记忆内容或库结构的任何变更，纯命令面与文档修复；`lint` / `doctor` / 同步等运行时行为一字未动。
+- 顺带修好本地 editable 安装的元数据：`pyproject.toml` 早前已改到 `0.28.0`，但未重装，导致 `pip show membridge` 停在 `0.27.1` 而 `membridge --version` 已是新值。本次重装后两者一致。
+
+### 测试
+- 全量 `python tests/run_tests.py`：**123/150 通过**（较 v0.28.0 的 122/149 **新增 1 例通过**，即上面这条守卫测试）。27 项失败与改动前**逐条同源**——沙箱缺 `mcp` / `cryptography` / `rclone`、`schtasks` 被安全策略拦截，**零回归**。
+
 ## [0.28.0] - 2026-09-16
 
 「记忆库自己会体检」：`lint` 四项确定性结构检查，零 LLM、零依赖、只报告。三原则不变——省 token / 简洁易上手 / **绝不动记忆本身**。

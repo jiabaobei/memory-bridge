@@ -99,6 +99,30 @@ def test_skill_template_has_frontmatter_and_commands():
     assert "membridge add" in SKILL_MD and "membridge context" in SKILL_MD
 
 
+def test_skill_template_covers_every_cli_subcommand():
+    """技能模板必须覆盖 cli.py 的每个子命令。
+
+    v0.28.1 加的守卫：加了 CLI 命令却忘了同步模板，技能就"不知道自己有这能力"。
+    实测过这个缺口确实发生（v0.28.0 的 lint 与 20 个历史命令都没进模板），
+    所以把口径固化成测试，而不是靠人记得改两处。
+    """
+    import re
+
+    from membridge import cli as cli_mod
+
+    cli_src = Path(cli_mod.__file__).read_text(encoding="utf-8")
+    subcommands = set(re.findall(r"add_parser\(\s*[\"']([a-z0-9-]+)", cli_src))
+    documented = set(re.findall(r"membridge ([a-z0-9-]+)", SKILL_MD))
+
+    assert subcommands, "没能从 cli.py 解析出子命令，正则可能失效"
+    missing = sorted(subcommands - documented)
+    assert not missing, f"技能模板漏了这些命令：{missing}"
+
+    # 反向：模板不能提到 CLI 里不存在的命令（防手误拼错）
+    phantom = sorted(documented - subcommands)
+    assert not phantom, f"技能模板提到 CLI 里不存在的命令：{phantom}"
+
+
 def test_manual_guides_cover_trae_and_coze():
     guides = {c.key: c for c in clients.manual_guides()}
     assert "trae" in guides and "coze" in guides
