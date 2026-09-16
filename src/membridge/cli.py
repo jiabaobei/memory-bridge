@@ -919,6 +919,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:  # noqa: ARG001
     return run_doctor()
 
 
+def cmd_lint(args: argparse.Namespace) -> int:
+    from .lint import print_report, report_json, run_lint
+
+    store = _open_store(args)
+    try:
+        report = run_lint(store, stale_days=args.stale_days,
+                          fix_structure=args.fix_structure)
+    finally:
+        store.close()
+    if args.json:
+        print(report_json(report))
+    else:
+        print_report(report)
+    # 退出码：悬空边 / 凭证泄露算失败，供计划任务与 CI 消费
+    return 1 if report["counts"]["errors"] else 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(
@@ -1142,6 +1159,16 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p = sub.add_parser("doctor", help="环境自检：版本 / 记忆库 / 可选依赖 / 平台检测")
     p.set_defaults(func=cmd_doctor)
+
+    from .lint import STALE_DAYS as _LINT_STALE_DAYS
+
+    p = sub.add_parser("lint", help="记忆库内容体检：悬空边 / 孤立 / 陈旧 / 凭证泄露（只报告）")
+    p.add_argument("--json", action="store_true", help="输出机器可读 JSON")
+    p.add_argument("--stale-days", type=int, default=_LINT_STALE_DAYS,
+                   help=f"陈旧阈值（天，默认 {_LINT_STALE_DAYS}）：孤立且超期未访问才提示")
+    p.add_argument("--fix-structure", action="store_true",
+                   help="只删悬空边（结构修复，不碰记忆内容）")
+    p.set_defaults(func=cmd_lint)
 
     args = parser.parse_args(argv)
     return args.func(args)
