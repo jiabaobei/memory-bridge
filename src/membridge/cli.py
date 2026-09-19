@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -936,6 +937,87 @@ def cmd_lint(args: argparse.Namespace) -> int:
     return 1 if report["counts"]["errors"] else 0
 
 
+# v0.29：条目行 = `- ` / `* ` / `+ ` / `1. ` / `1) ` 开头（前导空白忽略）
+_BULLET_RE = re.compile(r"(?:[-*+]|\d+[.)])\s+(.+)")
+
+
+def cmd_import_md(args: argparse.Namespace) -> int:
+    """v0.29 确定性导入：把 Markdown/文本日志的条目行批量写进记忆库。
+
+    零 LLM、纯 stdlib 解析（补上 autosync 缺的 Ingest 一环）：
+    条目行各成一条记忆；标题/空行/代码块跳过；文件名形如 2026-09-19.md
+    时给内容加 `[日期] ` 前缀（条目脱离文件也能自证时间）。逐条按内容
+    精确判重，重复导入安全。
+    """
+    store = _open_store(args)
+    embedder = capabilities.best_embedder()
+    if not store._get_meta("embedder_id"):
+        store._set_meta("embedder_id",
+                        json.dumps(embedder_identity(embedder), ensure_ascii=False))
+
+    paths: List[Path] = []
+    for raw in args.paths:
+        p = Path(raw).expanduser()
+        if p.is_dir():
+            paths.extend(sorted(list(p.glob("*.md")) + list(p.glob("*.txt"))))
+        elif p.is_file():
+            paths.append(p)
+        else:
+            print(f"跳过（不存在）：{raw}")
+    if not paths:
+        print("没有可导入的文件。")
+        return 1
+
+    added = dup = 0
+    for p in paths:
+        m = re.match(r"(\d{4}-\d{2}-\d{2})", p.name)
+        prefix = f"[{m.group(1)}] " if m else ""
+        file_added = 0
+        in_code = False
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            s = line.strip()
+            if s.startswith("```"):
+                in_code = not in_code
+                continue
+            if in_code or not s or s.startswith("#"):
+                continue
+            bm = _BULLET_RE.match(s)
+            if not bm:
+                continue
+            content = prefix + bm.group(1).strip()
+            if len(content) < args.min_len:
+                continue
+            if store.conn.execute(
+                "SELECT 1 FROM nodes WHERE content = ?", (content,)
+            ).fetchone():
+                dup += 1
+                continue
+            if not args.dry_run:
+                node = MemoryNode(
+                    content=content,
+                    embedding=embedder.embed(content),
+                    tags=[t.strip() for t in (args.tags or "").split(",") if t.strip()],
+                    scene=args.scene or classify_scene(content),
+                    device=args.device or store.device_name,
+                    migration=args.migration or default_migration(content),
+                    kind=(args.kind or "").strip(),
+                )
+                with store.transaction():
+                    store.add(node)
+                    build_edges(store, embedder, only_new=node)
+                    build_entity_edges(store, node)
+            added += 1
+            file_added += 1
+        print(f"  {p.name}: {'[dry] ' if args.dry_run else ''}导入 {file_added} 条")
+
+    print(f"\n合计：导入 {added} 条，判重跳过 {dup} 条"
+          + ("（dry-run，未写库）" if args.dry_run else ""))
+    if added and not args.dry_run:
+        print("下一次自动同步（每 15 分钟）会把其中可上云的条目传出。")
+    store.close()
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(
@@ -1169,6 +1251,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--fix-structure", action="store_true",
                    help="只删悬空边（结构修复，不碰记忆内容）")
     p.set_defaults(func=cmd_lint)
+
+    p = sub.add_parser("import-md",
+                       help="确定性导入：把 Markdown/文本日志条目批量写进记忆库（零 LLM）")
+    p.add_argument("paths", nargs="+",
+                   help="文件或目录（目录取 *.md 与 *.txt，按文件名排序）")
+    p.add_argument("--dry-run", action="store_true", help="只解析与判重，不写入")
+    p.add_argument("--tags", default="imported", help="附加标签（默认 imported）")
+    p.add_argument("--scene", default=None, help="场景域（默认自动分类）")
+    p.add_argument("--migration", default=None,
+                   help="迁移标签 local/edge/cloud（默认自动判定，隐私词照走 local）")
+    p.add_argument("--kind", default="", choices=["", "fact", "procedure", "handover"],
+                   help="可选标注（默认空 = 不标注）")
+    p.add_argument("--min-len", type=int, default=8,
+                   help="条目最短字符数，过滤碎屑行（默认 8）")
+    p.set_defaults(func=cmd_import_md)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -8,12 +8,15 @@
 
 from __future__ import annotations
 
+import datetime
 import os
 import socket
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
+from xml.sax.saxutils import escape
 
 from . import clients
 from .store import MemoryStore, default_db_path
@@ -358,14 +361,48 @@ def run_init(opts: InitOptions, out=print) -> int:
             import subprocess
 
             exe = shutil.which("membridge") or shutil.which("membridge.exe")
-            cmd = f'"{exe}" autosync' if exe else f'"{sys.executable}" -m membridge autosync'
+            # v0.29：改用 XML 注册。schtasks 命令行默认带两个静默坑——
+            # ① 用电池时直接跳过（DisallowStartIfOnBatteries=true）
+            # ② 错过班次不补跑（StartWhenAvailable=false）
+            # 笔记本上这两条叠加 = 「该跑却没跑」，且计划任务界面看不出异常。
+            command, arguments = ((exe, "autosync") if exe
+                                  else (sys.executable, "-m membridge autosync"))
+            start = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+            task_xml = (
+                '<?xml version="1.0" encoding="UTF-16"?>\n'
+                '<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+                "  <Triggers><TimeTrigger>\n"
+                f"    <StartBoundary>{start}</StartBoundary>\n"
+                "    <Repetition><Interval>PT15M</Interval>"
+                "<StopAtDurationEnd>false</StopAtDurationEnd></Repetition>\n"
+                "    <Enabled>true</Enabled>\n"
+                "  </TimeTrigger></Triggers>\n"
+                "  <Principals><Principal id=\"Author\">"
+                "<LogonType>InteractiveToken</LogonType></Principal></Principals>\n"
+                "  <Settings>\n"
+                "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n"
+                "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n"
+                "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n"
+                "    <StartWhenAvailable>true</StartWhenAvailable>\n"
+                "    <Enabled>true</Enabled>\n"
+                "    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>\n"
+                "  </Settings>\n"
+                "  <Actions Context=\"Author\"><Exec>\n"
+                f"    <Command>{escape(command)}</Command>\n"
+                f"    <Arguments>{escape(arguments)}</Arguments>\n"
+                "  </Exec></Actions>\n"
+                "</Task>\n"
+            )
+            xml_path = os.path.join(tempfile.gettempdir(), "membridge_autosync_task.xml")
+            with open(xml_path, "w", encoding="utf-16") as f:
+                f.write(task_xml)
             r = subprocess.run(
-                ["schtasks", "/Create", "/F", "/SC", "MINUTE", "/MO", "15",
-                 "/TN", "MemoryBridge AutoSync", "/TR", cmd],
+                ["schtasks", "/Create", "/F", "/TN", "MemoryBridge AutoSync", "/XML", xml_path],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
             )
             if r.returncode == 0:
-                out("   ⏱ 自动同步计划任务已注册：每 15 分钟运行一次（重要记忆立即上云）")
+                out("   ⏱ 自动同步计划任务已注册：每 15 分钟一次"
+                    "（重要记忆立即上云；用电池也跑，错过的班次开机后补跑）")
             else:
                 out(f"   ⚠️ 计划任务注册失败：{r.stderr.strip() or r.stdout.strip()}")
         elif not opts.no_autosync:

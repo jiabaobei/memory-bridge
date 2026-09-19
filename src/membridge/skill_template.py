@@ -49,7 +49,19 @@ membridge context "<主题>" -k 5
 
 # 记忆库统计（条数 / 标签 / 关联）
 membridge stats
+
+# 批量导入：把 Markdown/文本日志的条目行写进记忆库（零 LLM，逐条内容判重）
+# 条目行 = `- `/`* `/`N. ` 开头；标题/空行/代码块跳过；文件名带日期时加 [日期] 前缀
+membridge import-md <文件或目录>          # 目录取 *.md 与 *.txt
+membridge import-md <路径> --dry-run      # 只解析与判重，不写库；先看再导
+membridge import-md <路径> --tags imported --min-len 8
 ```
+
+要点：
+- `import-md` 是 autosync 缺的 Ingest 一环：自动同步只运「已在库里的」，**从不采集**。
+  会话产出了值得长期记住的东西、而没走 `add` 时，用 `import-md` 把日志补进库。
+- 隐私词照走 PAMS 自动判定（命中即 `local` 永不上云），与单条 `add` 同一套规则。
+- 逐条按内容精确判重：重复跑安全，不会产生重复记忆。
 
 ### 交接班
 
