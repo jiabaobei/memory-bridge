@@ -92,14 +92,23 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
         out("⚠️ 尚未配置云盘通道：请先运行 membridge init")
         return 2
     _folder_round(netdisk, out, store.path)
-    pass_ = (
-        passphrase
-        or os.environ.get("MEMBRIDGE_PASSPHRASE")
-        or load_passphrase(store)
-        # v0.17：与 CLI 同一条回落链。否则自动任务用保险库口令、手动 sync 用
-        # 通道密钥，同一台设备会同时往一条通道里发两种钥匙的包——又是一次静默分裂
-        or _channel.ensure_key(netdisk)
-    )
+    # v0.29.1：通道密钥（已存在时）必须压过保险库旧口令——兑现 v0.17 契约
+    # 「密钥随通道走」。此前链序 vault 在前，init 时代设过保险库口令的机器，
+    # 自动任务永远用它发包，而手动 sync 用通道密钥：同一台设备往一条通道里
+    # 发两种钥匙的包（真机事故 2026-09-28：对端「时好时坏」解不开的根源）。
+    # 仅认已存在的通道密钥（create=False）：老式口令通道（无 channel.key）
+    # 行为不变，仍回落保险库；密钥的创建仍只发生在手动 sync。
+    channel_key = _channel.ensure_key(netdisk, create=False)
+    vault_p = load_passphrase(store)
+    pass_ = passphrase or os.environ.get("MEMBRIDGE_PASSPHRASE") or channel_key or vault_p
+    if channel_key and vault_p and vault_p != channel_key and pass_ == channel_key:
+        out(
+            "⚠️ 本机保险库口令与通道密钥不一致：本次按通道密钥加解密。"
+            "若他端取不到本机自动发布的包，让对端升级后跑一次 membridge sync。"
+        )
+    if not pass_:
+        # 老式通道且无保险库：维持 v0.17 兜底——此时才允许创建通道密钥
+        pass_ = _channel.ensure_key(netdisk)
     if not pass_:
         out("⚠️ 尚未设置自动同步口令：请运行 membridge init 一次性设置")
         return 2

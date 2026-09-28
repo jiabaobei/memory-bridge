@@ -230,7 +230,9 @@ class FolderTransport:
                         # Fernet 抛 InvalidToken，对用户毫无信息量；换成可操作的提示
                         raise ValueError(
                             f"口令不匹配，无法解密 {fn}：发布端与接收端必须使用同一口令，"
-                            "可用 membridge show-passphrase 查看本机口令"
+                            "可用 membridge show-passphrase 查看本机口令。"
+                            "常见根因：发布端用了旧版自设口令或保险库旧口令——"
+                            "让发布端改用通道密钥（默认，不传 --passphrase）重发即可"
                         ) from None
                 else:
                     payload = raw

@@ -82,6 +82,40 @@ def test_autosync_requires_channel_and_falls_back_to_channel_key():
     store.close()
 
 
+def test_autosync_channel_key_beats_stale_vault():
+    """v0.29.1 回归：通道密钥已存在时必须压过保险库旧口令（真机事故 2026-09-28）。
+
+    init 时代设过保险库口令的机器，自动任务此前永远用保险库口令发包，
+    而手动 sync 用通道密钥——同一台设备发两种钥匙的包，对端「时好时坏」。
+    """
+    saved = os.environ.pop("MEMBRIDGE_PASSPHRASE", None)  # 隔离系统环境变量
+    try:
+        from membridge import channel as _channel
+        from membridge.transport import FolderTransport, PassphraseCryptor
+
+        store = _store("手机")
+        ch = tempfile.mkdtemp()
+        store.set_netdisk(ch)
+        _channel.ensure_key(ch)  # 手动 sync 时代已在通道里落了密钥
+        channel_key = _channel.ensure_key(ch, create=False)
+        vault.save_passphrase(store, "init时代的旧口令")  # 保险库里躺着旧口令
+        _add(store, COFFEE, confidence=0.95)
+        lines = []
+        assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 0
+        assert any("通道密钥不一致" in ln for ln in lines)  # 分裂告警必须现形
+        pkg = [os.path.join(ch, "outbox", f) for f in os.listdir(os.path.join(ch, "outbox"))][0]
+        env = json.loads(open(pkg, "rb").read().decode("utf-8"))
+        # 包必须能用通道密钥解开（旧实现会用保险库口令加密，对端解不开）
+        payload = json.loads(
+            PassphraseCryptor(channel_key, salt=bytes.fromhex(env["salt"]))
+            .decrypt(env["token"]))
+        assert any(n["content"] == COFFEE for n in payload["nodes"])
+        store.close()
+    finally:
+        if saved:
+            os.environ["MEMBRIDGE_PASSPHRASE"] = saved
+
+
 def test_autosync_important_publishes_immediately():
     store = _store("手机")
     ch = tempfile.mkdtemp()

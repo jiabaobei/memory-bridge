@@ -383,6 +383,14 @@ def _package_sync(args: argparse.Namespace) -> int:
         + (f"，拒绝 {rejected} 个嵌入器不一致的包" if rejected else "")
         + (f"，跳过 {len(result['skipped'])} 个" if result["skipped"] else "")
     )
+    # v0.29.1：致命跳过必须现形——此前「口令不匹配」等数据性失败被压进
+    # 跳过计数里，用户看到「跳过 22 个」无从分辨正常去重与共享断裂
+    # （真机事故 2026-09-28：531 条大包卡在通道里 8 天无人察觉）。
+    for fn, reason in result["skipped"]:
+        if not reason.startswith(("自己发布的包", "重复包")):
+            print(f"⚠️ 他端包未能取回 {fn}：{reason}")
+    for fn, reason in result.get("errors", []):
+        print(f"⚠️ 环境错误 {fn}（包已保留，下次 sync 自动重试）：{reason}")
     if tr.channel_status == "mismatch":
         print("⚠️ 通道身份不一致：本机记录的通道 ID 与云盘里的身份证不符"
               "（疑似通道分裂，运行 membridge channel 查看详情）")
@@ -723,6 +731,18 @@ def cmd_channel(args: argparse.Namespace) -> int:
     if warning:
         print(f"⚠️ 历史分裂告警（{warning.get('seen')}）："
               f"本机 {warning.get('local')} vs 通道 {warning.get('remote')}")
+    # v0.29.1：outbox 积压可见——「时好时坏的共享」先在体检里现形，
+    # 不用等某次 sync 的跳过输出（ponytail: 前缀匹配判定他端，设备名撞车时
+    # 最多少报一个，不影响正确性；精确归因看 sync/fetch 的逐包原因）。
+    outbox_dir = os.path.join(netdisk, "outbox")
+    if os.path.isdir(outbox_dir):
+        my_prefix = transport._safe_device(store.device_name) + "-"
+        backlog = [f for f in os.listdir(outbox_dir)
+                   if (f.endswith(".json") or f.endswith(".enc.json"))
+                   and not f.startswith(my_prefix)]
+        if backlog:
+            print(f"📥 通道积压：outbox 有 {len(backlog)} 个他端差分包待取"
+                  "——运行 membridge sync 取回；长期取不回的看 fetch 输出里的原因")
     return 0
 
 
