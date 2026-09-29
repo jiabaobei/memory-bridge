@@ -10,6 +10,8 @@
 
 | 版本 | 日期 | 改版说明 |
 |---|---|---|
+| v0.30.0 | 2026-09-30 | 「只取结构层」：首次对标 **vectorize-io/hindsight**（实测 **42,252★**/5,672 forks/MIT，Web「4 万星」属实；事前核对仓库全库与论文 v7.1/v8 **零命中**）。判定其价值主干全在 LLM 管线（retain 抽事实/实体、consolidation 生成 observations、reflect 推理、mental models 后台重写）→ 撞「内容冻结」与「服务端零 LLM」；论文自引 **Faulty Memory（ACL 2026, ref[9]）** 已论证情节→语义自动抽象不可靠，而它正是抽象派代表 → **立场不变，只取确定性结构层**。落地两项**只读**能力：① `scope` 增 **`at:` 时间窗**（相对量 `7d`/`12h`/`30m`/`2w`、月 `2026-09`、日 `2026-09-20`、区间 `a..b` 任一端可省且右端点含当日整天；对齐它 recall 的第 4 路 temporal，纯 stdlib、写法非法＝不过滤）② `store.evidence_counts()` **证据计数（proof count）** 作 RRF 同分次级键 + `search` 行尾只读尾注「· 被 N 条记忆引用」，**注入块刻意不加**（每轮常驻 token 优先省）。零新依赖、零写路径、schema/DSS 零改动；新增 4 例测试（含 v0.26 字节一致守卫） |
+| v0.29.1 | 2026-09-28 | 「共享可见性修复版」：修掉跨端共享「时好时坏、坏了没人知道」的两个真实缺陷（真机事故：一端 531 条记忆的大差分包在通道里卡了 8 天无人察觉）。① **autosync 口令链序**（`sync_agent.py`）：通道密钥（已存在时）压过保险库旧口令——兑现 v0.17「密钥随通道走」契约；此前链序 vault 在前，init 时代设过保险库口令的机器自动任务永远用旧口令发包，而手动 `sync` 用通道密钥，**同一台设备往一条通道里发两种钥匙的包**，对端解不开。② **sync 跳过原因透明化**（`cli.py`）：「口令不匹配」等数据性失败此前被压进 `跳过 N 个` 计数、与正常去重无法区分，现逐包打印原因。③ `fetch` 口令不匹配时补根因指向（`transport.py`）；④ `channel` 体检新增 **outbox 积压提示**。老式口令通道（通道内无 `channel.key`）行为一字不变，记忆内容零改动 |
 | v0.29.0 | 2026-09-20 | 「自动同步不再是无米之炊」：实测排查确认自动同步链路本身健康（计划任务每 15 分钟跑、结果码 0），多日「该传却没传」的根因在上游——**产品只有显式 `add` 一个写库入口，会话工作日志永远进不了库**；叠加计划任务电池供电时静默跳过且不补跑。新增 **`membridge import-md`**（确定性导入，零 LLM 纯 stdlib：条目行各成一条记忆、代码块/标题跳过、文件名带日期加 `[日期]` 前缀、逐条内容判重重复跑安全、隐私词照走 PAMS，`--dry-run` 先看后导）补上 Ingest 一环，与 llm_wiki 流水线对齐而不破「核心零 LLM」承诺；`wizard.py` 的 Windows 计划任务注册改用 **XML**，关掉 `DisallowStartIfOnBatteries` / `StopIfGoingOnBatteries` 两个默认跳过条件、打开 `StartWhenAvailable` 错过补跑（schtasks 命令行不带这些开关时默认全是最坑值）。新增 `tests/test_import_md.py` 4 例，全量 127/154，stash 对照基线逐条 diff：27 失败 = 基线 26 + 守卫测试新增 1（补模板后转绿），零回归 |
 | v0.28.1 | 2026-09-16 | 「让技能知道自己会什么」：技能模板只写了 9 个命令，而 `cli.py` 实际有 30 个——`lint`（v0.28.0 刚加）与 20 个历史命令都没进模板，后果是 **agent 装了技能也不知道这些能力存在**，等于白做。按真实 `--help` 输出补齐全部 30 个命令并按场景分组；措辞与实现对齐（`--kind` 取 `fact`/`procedure`/`handover`；`delta`、`preload` 吃位置参数而非 `--device`；核实 `lint --json` 与 `--fix-structure` **不互斥**）。修正 `skill_template.py` 模块文档里一句不成立的注释（声称仓库内有 `skills/memory-bridge/SKILL.md`，实际不存在）——改为指向真实消费者 `clients.py` 的 `SkillInstaller`。真正的结构性修复是新增测试 `test_skill_template_covers_every_cli_subcommand`：从 `cli.py` 解析全部子命令强制模板覆盖，并**反向禁止模板出现 CLI 里没有的命令**；缺口能积到 21 个正是因为「加命令/改模板」靠人记得做两处，现在漏一处即测试失败。不含任何记忆内容或库结构变更。顺带修好 editable 元数据（`pyproject.toml` 已到 0.28.0 但未重装，`pip show` 停在 0.27.1）。全量 123/150（较 v0.28.0 净增 1 例通过），27 项失败逐条同源，零回归 |
 | v0.28.0 | 2026-09-16 | 「记忆库自己会体检」：`membridge lint` 四项**确定性**结构检查（悬空边 / 孤立 / 陈旧 / 凭证泄露），零 LLM 零依赖只报告，`--json` 供 CI，`--fix-structure` 只删悬空边。借鉴 llm_wiki 的 deterministic lint（它本身不调 LLM，所以与核心零 LLM 承诺兼容）。原拟七项砍到四项：低置信（`confidence` 恒 1.0 无人修改）、取代残留（`supersede` 边无创建点）、容器健康（doctor 已有）全是空转；「死链」不按 `refs:` 判（自由文本且天然指向库外，硬判必误报），改按 `edges` 悬空判——这才是与 llm_wiki 页面链接语法对齐的那条「链」。新增 `tests/test_lint.py` 5 例，全量 122/149（失败项与改动前同源：沙箱缺 cryptography/rclone、schtasks 被拦），零回归 |
@@ -55,6 +57,31 @@
 | v0.2.0 | 2026-08-29 | 一键接入：init 自动配置主流 AI 平台（MCP / 技能 / 手动指南），新增 doctor 自检 |
 | v0.1.1 | 2026-08-29 | 修复 mcp 2.x 兼容（锁定 mcp>=1.2,<2），依赖缺失给可操作提示 |
 | v0.1.0 | 2026-08-29 | 首个公开版本：跨设备、跨平台 AI 共享记忆层（SAN + DSS + PAMS + Path A + MCP） |
+
+## Hindsight 对标 ✅（第 1+2 项已实施 = v0.30.0，2026-09-30）
+
+**起因**：对标 vectorize-io/hindsight（2026-09-30 实测 **42,252★** / 5,672 forks / MIT，Web 「4 万星」属实）。
+事前核对：仓库全库与论文 v7.1 / v8 **均零命中**——这是记忆桥**第一次**对标它。
+完整对照见 [docs/design-notes/hindsight-borrowings.md](design-notes/hindsight-borrowings.md)。
+
+**硬冲突**：它的价值主干全在 LLM 管线上（retain 抽事实/实体、consolidation 生成
+observations、reflect 推理、mental models 后台重写）——条条撞「内容冻结」与
+「服务端零 LLM」。论文自引的 **Faulty Memory（ACL 2026, ref [9]）**已论证
+情节→语义的自动抽象不可靠，而它正是抽象派代表。→ **立场不变，只取结构层。**
+
+**借什么（4 项，全为只读、零新依赖）**：
+
+1. 📋 **时间路召回**：`scope` 语法加 `at:` 时间窗（对齐它 recall 的第 4 路 temporal）
+2. 📋 **证据计数可视化**：`edges.evidence`（v0.14 已有）对外只读显示 + 同分次级排序
+3. 📋 **敏感模式清单扩充**（对齐其 Memory Defense 的 45 种 secret/PII 模式）
+4. ✅ 仅记录：其「bank 级背景 + 每 bank 策略」对应本项目的**每条记忆 migration 三档**，
+   **已在更细粒度实现同一意图**（与 v0.13.1 对 Context7 同型：验证意义大于借鉴意义）
+
+**明确不借**：LLM 抽取/整合/精写、reflect 推理、cross-encoder 重排、Cloud 计费托管、
+把 bank 当新隔离维度、777 MB 级仓库形态。
+
+**建议顺序**：v0.30 做第 1+2 项；v0.31 做第 3 项；论文 Related Work 补「LLM 抽象派 vs
+冻结本体派」一段（Hindsight 作反例代表，把「服务端零 LLM」从实现取舍升级为文献支撑的主张）。
 
 ## 内容体检版 ✅（v0.28.0，2026-09-16，lint）
 

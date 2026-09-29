@@ -285,6 +285,28 @@ class MemoryStore:
             out[kind or "unlabeled"] = cnt
         return out
 
+    def evidence_counts(self, node_ids: List[str]) -> Dict[str, int]:
+        """每条记忆被多少条**不同**记忆引用（v0.30，只读信号）。
+
+        对齐 Hindsight 的 proof count：把 v0.14 起就已落库、却一直只在内部
+        可见的边关系数，暴露成一个可展示、也可用于同分排序的确定性信号。
+        入边与出边都算（SAN 边可单向，口径＝邻居数），只对边表做计数查询——
+        不读、不写、不改任何记忆内容（内容冻结无损），也不新增任何依赖。
+        """
+        ids = [i for i in dict.fromkeys(node_ids) if i]
+        if not ids:
+            return {}
+        qs = ",".join("?" * len(ids))
+        rows = self.conn.execute(
+            "SELECT node_id, COUNT(DISTINCT other) FROM ("
+            f" SELECT dst AS node_id, src AS other FROM edges WHERE dst IN ({qs})"
+            " UNION ALL"
+            f" SELECT src AS node_id, dst AS other FROM edges WHERE src IN ({qs})"
+            ") GROUP BY node_id",
+            ids + ids,
+        ).fetchall()
+        return {r[0]: r[1] for r in rows}
+
     def neighbors(self, node_id: str) -> List[Tuple[MemoryNode, float]]:
         """SAN 邻居查询原语 N1(n)（论文 §3.7.4 动作空间的基础）。"""
         rows = self.conn.execute(

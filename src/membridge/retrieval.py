@@ -10,11 +10,23 @@
   元数据，由 doctor 提醒用户补写——系统只提醒，内容永远由用户写。
 - 「沉默也是动作」（Meta Proactive Memory Agent）：没有高质量命中时
   明确返回空结果，由上层显式告知"本轮不注入"，而不是硬凑弱命中。
+
+v0.30 借鉴修订（对齐 vectorize-io/hindsight，只取结构层，见
+docs/design-notes/hindsight-borrowings.md）：
+- `at:` 时间窗（对齐其 recall 的第 4 路 temporal）：scope 语法从
+  tag/scene/kind 扩到时间维度，先过滤再融合，仍是纯 SQL/纯内存过滤。
+- 证据计数（proof count）：RRF 同分时先比"被多少条记忆引用"——数值由
+  边表推出，同输入恒同输出，v0.26 的字节一致承诺不破。
+- 两者都是**只读**能力：无写路径、无内容生成、无新依赖。
 """
 
 from __future__ import annotations
 
-from typing import List, Tuple
+import datetime
+import math
+import re
+import time
+from typing import List, Optional, Tuple
 
 from .embeddings import Embedder
 from .node import MemoryNode
@@ -25,14 +37,88 @@ RRF_K = 60          # 标准值（2009 SIGIR 确立），无需调参
 GRAPH_SEEDS = 2     # 取前两路各前 2 名作为图扩展种子
 GRAPH_FANOUT = 3    # 每个种子最多扩展的 SAN 邻居数
 
+REL_UNITS = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
+_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
+_REL_RE = re.compile(r"^(\d+)([mhdw])$")
+
+
+def _day_ts(year: int, month: int, day: int) -> float:
+    """某天 0 点的时间戳（本地时区，stdlib 即可，零依赖）。"""
+    return datetime.datetime(year, month, day).timestamp()
+
+
+def _token_window(token: str, now: float) -> Optional[Tuple[float, float]]:
+    """把单个时间记号解析成 (start, end) 半开区间；无法解析返回 None。"""
+    token = token.strip().lower()
+    m = _REL_RE.match(token)
+    if m:
+        return now - int(m.group(1)) * REL_UNITS[m.group(2)], math.inf
+    m = _DATE_RE.match(token)
+    if m:
+        year, month, day = (int(x) for x in m.groups())
+        try:
+            start = _day_ts(year, month, day)
+        except ValueError:
+            return None
+        return start, start + 86400
+    m = _MONTH_RE.match(token)
+    if m:
+        year, month = (int(x) for x in m.groups())
+        try:
+            start = _day_ts(year, month, 1)
+        except ValueError:
+            return None
+        nxt = (year + 1, 1) if month == 12 else (year, month + 1)
+        return start, _day_ts(nxt[0], nxt[1], 1)
+    return None
+
+
+def parse_time_window(value: str, now: Optional[float] = None
+                      ) -> Optional[Tuple[float, float]]:
+    """解析 `at:` 时间窗（v0.30，对齐 Hindsight recall 的第 4 路 temporal）。
+
+    支持四种写法（半开区间 [start, end)，**右端点含该记号的整天/整月**）：
+    - 相对：`7d` / `12h` / `30m` / `2w`    → [now-Δ, ∞)
+    - 月份：`2026-09`                       → 该月整天
+    - 日期：`2026-09-20`                    → 该日整天（到 21 日 0 点）
+    - 区间：`2026-09-01..2026-09-20`，任一端可省略（`..2026-09` / `2026-09..`），
+      写"到 9-20"就是**含 9-20 一整天**——避免"看起来含、实际不含"的坑。
+
+    解析失败一律返回 None ＝ 不过滤，与"未知 scope 字段"同口径（向前兼容：
+    老调用方传的 scope 行为完全不变）。纯解析、纯过滤，不写不改任何记忆。
+    """
+    if not value:
+        return None
+    now = time.time() if now is None else now
+    if ".." in value:
+        left, _, right = value.partition("..")
+        if not left.strip() and not right.strip():
+            return None          # `at:..`＝两端都空，无意义 → 按"不过滤"处理
+        start, end = 0.0, math.inf
+        if left.strip():
+            win = _token_window(left, now)
+            if win is None:
+                return None
+            start = win[0]
+        if right.strip():
+            win = _token_window(right, now)
+            if win is None:
+                return None
+            end = win[1]
+        return (start, end) if start < end else None
+    return _token_window(value, now)
+
 
 def scope_allowed(scope: str):
     """解析范围直达参数（v0.13.1，借鉴 Context7「已知目标直达」）。
 
     调用方已知道记忆在哪个范围时，先按范围过滤再融合——跳过无关候选，
-    更准、更省。支持 `tag:<名>` / `scene:<名>` / `kind:<fact|procedure|handover>`。
-    空串或无法解析（未知字段、缺值）返回 None = 不过滤，行为与之前完全一致。
-    只读过滤元数据，不触碰记忆内容。
+    更准、更省。支持 `tag:<名>` / `scene:<名>` / `kind:<fact|procedure|handover>`
+    与 v0.30 新增的 `at:<时间窗>`（对齐 Hindsight 的 temporal 路）：
+    `at:7d` / `at:2026-09` / `at:2026-09-01..2026-09-20`，按记忆创建时间过滤。
+    空串或无法解析（未知字段、缺值、时间窗写法不合法）返回 None = 不过滤，
+    行为与之前完全一致。只读过滤元数据，不触碰记忆内容。
     """
     if not scope or ":" not in scope:
         return None
@@ -46,6 +132,12 @@ def scope_allowed(scope: str):
         return lambda n: n.scene == value
     if field == "kind":
         return lambda n: n.kind == value
+    if field in ("at", "time", "ts"):
+        window = parse_time_window(value)
+        if window is None:
+            return None
+        start, end = window
+        return lambda n: start <= n.created_at < end
     return None
 
 
@@ -106,6 +198,7 @@ def search_with_reasons(
 
     scope（v0.13.1，可选）：范围直达，形如 `tag:dev` / `scene:work` /
     `kind:procedure`——调用方已知记忆所在范围时先过滤再融合，更准更省。
+    v0.30 起同一参数也接受 `at:<时间窗>`（如 `at:7d` / `at:2026-09`）。
     指定了范围而无命中属预期（该范围内没有），不记缺口。
     """
     allowed = scope_allowed(scope)
@@ -134,7 +227,11 @@ def search_with_reasons(
                 seen.append(name)
     # v0.26 字节一致：同分按 node_id 定序——同输入恒同输出（借鉴 Headroom
     # 压缩缓存的确定性承诺），跨端渲染出逐字节相同的注入块，前缀缓存可命中
-    fused = sorted(scores.items(), key=lambda t: (-t[1], t[0]))[:k]
+    # v0.30 证据计数：RRF 同分（含并列）时先比"被多少条记忆引用"——Hindsight
+    # proof count 的确定性用法；计数由边表推出，同输入仍恒同输出，字节一致不破
+    ev = store.evidence_counts(list(scores.keys()))
+    fused = sorted(scores.items(),
+                   key=lambda t: (-t[1], -ev.get(t[0], 0), t[0]))[:k]
     hits = [
         (nodes[nid], s, "+".join(why.get(nid, [])))
         for nid, s in fused

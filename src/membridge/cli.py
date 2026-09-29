@@ -80,9 +80,14 @@ def cmd_search(args: argparse.Namespace) -> int:
         else:
             print("（暂无相关记忆——已记入缺口，membridge doctor 可查看）")
         return 0
+    # v0.30 证据计数（proof count）：只出现在**给人看**的 search 输出里，
+    # 不进注入块——注入块多一个字都是常驻 token 开销，省 token 原则优先。
+    counts = store.evidence_counts([n.node_id for n, _ in hits])
     for i, (n, s) in enumerate(hits, 1):
         kind_tag = f"[{n.kind}] " if n.kind else ""
-        print(f"[{i}]（相关度 {s:.3f}）{kind_tag}{n.content}")
+        ev = counts.get(n.node_id, 0)
+        ev_tag = f" · 被 {ev} 条记忆引用" if ev else ""
+        print(f"[{i}]（相关度 {s:.3f}）{kind_tag}{n.content}{ev_tag}")
     return 0
 
 
@@ -1071,7 +1076,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("-k", type=int, default=5)
     p.add_argument("--scope", default="",
                    help="可选范围直达：已知记忆在哪时先过滤再检索"
-                        "（如 tag:dev / scene:work / kind:procedure / kind:handover）")
+                        "（如 tag:dev / scene:work / kind:procedure / kind:handover"
+                        " / at:7d / at:2026-09 / at:2026-09-01..2026-09-20）")
     p.set_defaults(func=cmd_search)
 
     p = sub.add_parser("context", help="输出 Path A 记忆上下文块")

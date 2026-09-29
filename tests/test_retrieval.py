@@ -3,10 +3,13 @@
 内容冻结守卫：截断注入必须是原文的连续前缀（不允许改写）。
 """
 
+import datetime
+import math
 import os
 import sqlite3
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 
@@ -249,4 +252,110 @@ def test_context_output_byte_identical_across_calls():
     out2 = injection.serialize(
         [n for n, _ in retrieval.hybrid_search(store, emb, "咖啡", k=5)])
     assert out1 == out2
+    store.close()
+
+
+# ---------- v0.30 at: 时间窗 + 证据计数（借鉴 Hindsight，只取结构层）----------
+
+def test_parse_time_window_forms():
+    """时间窗四种写法都能解析；非法写法返回 None＝不过滤（向前兼容）。"""
+    now = 1_800_000_000.0  # 固定"现在"，让相对量断言确定
+    s, e = retrieval.parse_time_window("7d", now=now)
+    assert s == now - 7 * 86400 and e == math.inf
+    assert retrieval.parse_time_window("12h", now=now)[0] == now - 12 * 3600
+    assert retrieval.parse_time_window("30m", now=now)[0] == now - 30 * 60
+    assert retrieval.parse_time_window("2w", now=now)[0] == now - 14 * 86400
+
+    def span(a, b):  # 用本地时区算真实跨度，避开时区/夏令时干扰
+        return (datetime.datetime(*b) - datetime.datetime(*a)).total_seconds()
+
+    s, e = retrieval.parse_time_window("2026-09", now=now)
+    assert e - s == span((2026, 9, 1), (2026, 10, 1))       # 月份＝整月
+    assert s == datetime.datetime(2026, 9, 1).timestamp()
+    s, e = retrieval.parse_time_window("2026-09-20", now=now)
+    assert e - s == span((2026, 9, 20), (2026, 9, 21))      # 日期＝整天
+    s, e = retrieval.parse_time_window("2026-09-01..2026-09-20", now=now)
+    assert s == datetime.datetime(2026, 9, 1).timestamp()      # 区间
+    assert e == datetime.datetime(2026, 9, 21).timestamp()     # 右端点含当日整天
+    s, e = retrieval.parse_time_window("..2026-09", now=now)
+    assert s == 0.0 and e == datetime.datetime(2026, 10, 1).timestamp()  # 左开
+    s, e = retrieval.parse_time_window("2026-09..", now=now)
+    assert s == datetime.datetime(2026, 9, 1).timestamp() and e == math.inf  # 右开
+
+    for bad in ("bogus", "2026-13", "2026-02-30", "..", "", "26-9"):
+        assert retrieval.parse_time_window(bad, now=now) is None
+
+
+def test_scope_at_filters_by_created_at():
+    """at: 按创建时间过滤：窗口外老记忆不进结果，窗口内照常召回；
+    非法时间窗与未知字段同口径（不过滤）；范围内无命中不记缺口。"""
+    store = _tmp_store()
+    emb = HashingEmbedder()
+    old = MemoryNode(content=COFFEE, embedding=emb.embed(COFFEE), device="phone",
+                     created_at=time.time() - 40 * 86400)
+    fresh = MemoryNode(content=LATTE, embedding=emb.embed(LATTE), device="phone")
+    store.add(old)
+    store.add(fresh)
+
+    hits = retrieval.hybrid_search(store, emb, "咖啡 拿铁", k=5, scope="at:7d")
+    contents = {n.content for n, _ in hits}
+    assert LATTE in contents and COFFEE not in contents
+    assert store.gap_queries() == []                    # 范围无命中是预期，不记缺口
+    assert retrieval.scope_allowed("at:bogus") is None  # 非法值＝不过滤
+    wide = retrieval.hybrid_search(store, emb, "咖啡 拿铁", k=5, scope="at:2020-01-01..")
+    assert COFFEE in {n.content for n, _ in wide}
+    store.close()
+
+
+def test_evidence_counts_distinct_neighbors_only():
+    """证据计数＝不同邻居数：重复方向不重复计数，无邻居为 0，空入参返回 {}。"""
+    store = _tmp_store()
+    emb = HashingEmbedder()
+    a = MemoryNode(content=COFFEE, embedding=emb.embed(COFFEE), device="phone")
+    b = MemoryNode(content=LATTE, embedding=emb.embed(LATTE), device="phone")
+    c = MemoryNode(content=MEETING, embedding=emb.embed(MEETING), device="phone")
+    for n in (a, b, c):
+        store.add(n)
+    store.add_edge(a.node_id, b.node_id, 0.9, kind="sim", evidence="cos=0.90")
+    store.add_edge(c.node_id, b.node_id, 0.8, kind="sim", evidence="cos=0.80")
+    store.add_edge(b.node_id, a.node_id, 0.9, kind="sim", evidence="cos=0.90")  # 反向重复
+
+    counts = store.evidence_counts([a.node_id, b.node_id, c.node_id])
+    assert counts[b.node_id] == 2   # 邻居 {a, c}
+    assert counts[a.node_id] == 1   # 邻居 {b}，反向不重复计
+    assert counts[c.node_id] == 1
+    assert counts.get("nope", 0) == 0
+    assert store.evidence_counts([]) == {}
+    store.close()
+
+
+def test_rrf_tie_prefers_more_evidence_and_stays_deterministic():
+    """RRF 同分时按证据计数排前，且同输入恒同输出（v0.26 字节一致不破）。"""
+    store = _tmp_store()
+    emb = HashingEmbedder()
+    a = MemoryNode(content="甲记忆", embedding=emb.embed("甲记忆"), device="phone")
+    b = MemoryNode(content="乙记忆", embedding=emb.embed("乙记忆"), device="phone")
+    c = MemoryNode(content="丙记忆", embedding=emb.embed("丙记忆"), device="phone")
+    d = MemoryNode(content="丁记忆", embedding=emb.embed("丁记忆"), device="phone")
+    for n in (a, b, c, d):
+        store.add(n)
+    store.add_edge(c.node_id, b.node_id, 0.9, kind="sim", evidence="cos=0.9")
+    store.add_edge(d.node_id, b.node_id, 0.9, kind="sim", evidence="cos=0.9")
+
+    # 关掉图路 + 手喂两路各一个 rank0 命中：两人评分严格相等（各 1/60）
+    orig_graph = retrieval.GRAPH_SEEDS
+    orig_kw, orig_search = retrieval.keyword_recall, store.search
+    retrieval.GRAPH_SEEDS = 0
+    retrieval.keyword_recall = lambda s, q: [(b, 0.9)]
+    store.search = lambda *a_, **k_: [(a, 0.9)]
+    try:
+        first = [n.content for n, _, _ in
+                 retrieval.search_with_reasons(store, emb, "任意", k=5)]
+        second = [n.content for n, _, _ in
+                  retrieval.search_with_reasons(store, emb, "任意", k=5)]
+    finally:
+        retrieval.GRAPH_SEEDS = orig_graph
+        retrieval.keyword_recall, store.search = orig_kw, orig_search
+    assert first[:2] == ["乙记忆", "甲记忆"]   # 证据多的在前（乙＝2 条引用）
+    assert first == second                     # 字节一致：同输入恒同输出
     store.close()

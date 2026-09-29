@@ -107,7 +107,7 @@ def create_server(
     @mcp.tool()
     def memory_search(query: str, k: int = 5, as_context: bool = False,
                       budget: int = 0, scope: str = "") -> str:
-        """检索记忆（三路混合，弱命中已过滤）；已知记忆在哪可用 scope 直达（如 tag:dev / kind:procedure / kind:handover）；as_context=true 返回带预算可注入块（最新交接卡恒定注入在工作台小节），无高质量命中明确告知不注入。"""
+        """检索记忆（三路混合，弱命中已过滤）；已知记忆在哪可用 scope 直达（如 tag:dev / kind:procedure / kind:handover / at:7d / at:2026-09 / at:2026-09-01..2026-09-20）；as_context=true 返回带预算可注入块（最新交接卡恒定注入在工作台小节），无高质量命中明确告知不注入。"""
         # v0.26 修复：统一走 search_with_reasons——as_context 补传 reasons
         # （v0.14 的召回理由标注此前只在 CLI 生效，MCP 侧丢失）
         hits3 = search_with_reasons(store, embedder, query, k=k, scope=scope)
