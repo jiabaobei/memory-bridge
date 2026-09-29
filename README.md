@@ -25,10 +25,12 @@
 
 同时，记忆桥是**跨平台**的：通过 MCP 协议，同一个记忆库可以被 Claude Code、Cursor、Cline 等任意 MCP 客户端共享使用（平台覆盖详情见下文矩阵）。
 
-## 当前能力（v0.27）
+## 当前能力（v0.30）
 
 | 能力 | 说明 | 状态 |
 |---|---|---|
+| 时间窗检索（Hindsight 借鉴·只取结构层） | `scope` 新增 `at:` 时间窗：相对量 `at:7d` / `at:12h` / `at:30m` / `at:2w`、月 `at:2026-09`、日 `at:2026-09-20`、区间 `at:2026-09-01..2026-09-20`（任一端可省，**右端点含当日整天**）——对齐 Hindsight recall 的第 4 路 temporal，先过滤再融合；纯标准库解析、写法非法一律＝不过滤，`tag:` / `scene:` / `kind:` 老用法逐字节不变 | ✅ v0.30 |
+| 证据计数（proof count，Hindsight 借鉴） | 按边表统计「这条记忆被多少条**不同**记忆引用」（入边出边去重）：`search` 结果行尾只读尾注 `· 被 N 条记忆引用`，RRF **同分时作次级排序键**；**注入块刻意不加**（每轮常驻 token 优先省）。v0.14 起就落库、却一直只在内部可见的边关系数，第一次对外可见 | ✅ v0.30 |
 | 容器一致性（各端 schema 可声明可对账） | 容器清单 `schema.py` 实读库结构生成本端身份证（schema 版本 / 节点边字段 / 边类型枚举 / 三存储平面 / 迁移登记）；`membridge schema` 查看本端、`--peer` 与对端双向对账，缺列按迁移登记自动 ALTER 补齐；差分包携带 `edges_v2` 五元组（含 kind/evidence）随包对账——**v0.14 的类型化边跨端往返不再退化** | ✅ v0.16 |
 | 三存储平面声明（mem0 借鉴） | manifest 声明 graph（edges）/ vector（nodes.embedding）/ kv（meta）三平面，实读表结构判定，缺平面即指纹不同、体检可查 | ✅ v0.16 |
 | seq 版本协商（rig 借鉴） | 发包 seq 单调递增，接收端按设备记 `sync_watermark` 水位线（只增不减），重复/乱序包内容指纹去重天然幂等 | ✅ v0.16 |
@@ -176,7 +178,7 @@ python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 
 ```bash
 membridge init                                           # 一键接入本机检测到的 AI 平台
 membridge add "用户在开发记忆桥项目" --tags dev          # 写入记忆（可选 --kind fact / procedure / handover）
-membridge search "记忆桥" -k 3                          # 三路混合检索（向量 + 关键词 + 图谱，RRF 融合；--scope tag:dev 范围直达）
+membridge search "记忆桥" -k 3                          # 三路混合检索（向量 + 关键词 + 图谱，RRF 融合；--scope tag:dev 范围直达、at:7d 时间窗、at:2026-09-01..2026-09-20 区间）
 membridge context "继续早上的讨论"                       # 输出 Path A 上下文块（最新交接卡恒定注入在【工作台】小节；无命中时明确"本轮不注入"）
 membridge handoff                                       # 查看当前工作台：最新交接卡原文与生效状态
 membridge handoff-hint                                  # 打印常驻交接提示（自愿粘贴进 CLAUDE.md / AGENTS.md）
@@ -336,7 +338,7 @@ Cursor / 其他 MCP 客户端（`mcp.json`）：
 
 可用工具：`memory_add`（Add，可选 `kind` 标注：fact / procedure / handover）、
 `memory_search`（Search，三路混合检索；已知记忆在哪可用 `scope` 范围直达，
-如 `tag:dev`；`as_context=true` 直接返回带预算的 Path A 注入块——最新交接卡
+如 `tag:dev`、`at:7d` 时间窗、`at:2026-09-01..2026-09-20` 区间；`as_context=true` 直接返回带预算的 Path A 注入块——最新交接卡
 恒定注入在【工作台】小节，无高质量命中时明确告知本轮不注入）、
 `memory_preload`（Preload）——严格限定在 UEP 权限边界内，没有"改写记忆"的工具。
 
@@ -442,6 +444,15 @@ pytest -q
   其 `[[file:line]]` 溯源思路落为召回理由标注，社区检测落为整簇预加载。
   图数据库、Tree-sitter 全量 AST、PDG 污点分析、提交后重索引一律不借
   （与三原则相悖），理由见 [路线图「GitNexus 借鉴版」一节](docs/roadmap.md)。
+- [Hindsight](https://github.com/vectorize-io/hindsight)（42k★，声称让
+  agent「学习」而不只是记忆）：**只取结构层**——v0.30 借鉴其 recall 的第
+  4 路 temporal（落为 `scope` 的 `at:` 时间窗）与 proof count（落为只读
+  「证据计数」+ 同分次级键）。其价值主干全在 LLM 管线（retain 抽事实/实体、
+  consolidation 生成 observations、reflect 推理、mental models 后台重写），
+  条条撞「内容冻结」与「服务端零 LLM」，**一律不借**；论文自引的
+  Faulty Memory（ACL 2026）恰是「抽象不可靠」的证据。逐条对照见
+  [设计笔记](docs/design-notes/hindsight-borrowings.md) 与
+  [路线图「Hindsight 对标」一节](docs/roadmap.md)。
 
 ## License
 

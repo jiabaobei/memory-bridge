@@ -2,6 +2,10 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.30.1] - 2026-09-30
+
+纯文档对齐（无代码变更）：v0.30.0 的两项新能力补进 README——「当前能力」表新增两行（`at:` 时间窗 / 证据计数）、CLI 与 MCP 工具描述补上 `at:` 用法、外部借鉴列表新增 Hindsight 条目（只取结构层 + 逐条不借理由）；「当前能力」小节版本号 v0.27 → v0.30。
+
 ## [0.30.0] - 2026-09-30
 
 「只取结构层」：对标 vectorize-io/hindsight（实测 **42,252★**，Web 流传的「4 万星」属实）后的首次借鉴落地——只借两个**确定性、只读**的结构件；它整套 LLM 管线（retain 抽事实/实体、consolidation 生成 observations、reflect 推理、mental models 后台重写）一律不借，理由逐条写在 `docs/design-notes/hindsight-borrowings.md`（第 3 份设计借鉴笔记）。

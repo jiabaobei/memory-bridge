@@ -32,10 +32,12 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.27)
+## Status (v0.30)
 
 | Capability | Status |
 |---|---|
+| **Time-window retrieval (Hindsight borrowing — structure layer only)** — `scope` gains `at:`: relative `at:7d` / `at:12h` / `at:30m` / `at:2w`, month `at:2026-09`, day `at:2026-09-20`, range `at:2026-09-01..2026-09-20` (either side omittable, **right end includes that whole day**). Mirrors Hindsight's 4th recall route (temporal), filtering before fusion; pure stdlib, invalid syntax = no filter, `tag:` / `scene:` / `kind:` behaviour byte-identical | ✅ v0.30 |
+| **Evidence count (proof count, Hindsight borrowing)** — counts how many **distinct** memories reference a node (in+out edges deduped): `search` appends a read-only `· referenced by N memories` suffix and the count acts as the **RRF tie-breaker**. Deliberately **absent from the injected context block** (every character there is a recurring token cost). Edge relations stored since v0.14 become visible outside the store for the first time | ✅ v0.30 |
 | **Container consistency (declarable, reconcilable schema across ends)** — a container manifest (`schema.py`) reads the local store and emits a device identity card (schema version / node+edge fields / kind enum / storage planes / migration registry); `membridge schema` shows the local card, `--peer` reconciles against any remote card in both directions, auto-ALTERs missing columns via the migration registry; deltas now carry an `edges_v2` 5-tuple (src, dst, weight, kind, evidence) reconciled before apply — **v0.14's typed edges no longer degrade across devices** | ✅ v0.16 |
 | **Storage-plane declaration (inspired by mem0)** — manifest declares graph (edges) / vector (nodes.embedding) / kv (meta) planes, read from the actual table structure; a missing plane changes the fingerprint and shows up in `doctor` | ✅ v0.16 |
 | **Seq version negotiation (inspired by rig)** — outbound deltas get a monotonically increasing `seq`; receivers track a per-device `sync_watermark` (monotonic), duplicate/out-of-order packets converge idempotently via content-fingerprint dedup | ✅ v0.16 |
@@ -151,6 +153,19 @@ zero dependencies), PDG / taint analysis, and post-commit auto-reindexing
 (content freezing means there is no stale index to rebuild) — see
 [Roadmap, "GitNexus borrowing release"](docs/roadmap.md).
 
+**Hindsight** (vectorize-io/hindsight, 42k★, which claims to let an agent *learn*
+rather than merely remember) is borrowed from at the **structure layer only**:
+v0.30 takes its 4th recall route (temporal → `scope`'s `at:` time window) and its
+proof count (→ a read-only "evidence count" plus the RRF tie-breaker). Everything
+that makes Hindsight valuable lives in its LLM pipeline — `retain` extracting
+facts/entities, `consolidation` generating observations, `reflect` reasoning,
+`mental models` rewriting in the background — and every one of those collides with
+content freezing and "zero LLM on the server", so **none of it is borrowed**. The
+Faulty Memory paper (ACL 2026) cited by our own paper is precisely the evidence
+that such abstraction is unreliable. Item-by-item comparison in the
+[design note](docs/design-notes/hindsight-borrowings.md) and
+[Roadmap, "Hindsight benchmark"](docs/roadmap.md).
+
 A fifth data point comes from the **edge**: devices are becoming first-class AI
 infrastructure. Ornith-1.5's 9B quantized build (~1.5 GB) runs directly on
 phones; OlliteRT turns a retired Android phone into a 24/7 LAN model server.
@@ -192,7 +207,7 @@ membridge init                                      # cloud channel (auto-picked
 membridge add "Working on the MemoryBridge project" --tags dev
                                                     # optional: --kind fact / procedure / handover
 membridge search "MemoryBridge" -k 3              # hybrid: vector + keyword + graph, RRF-fused
-                                                    # (--scope tag:dev to go straight to a known range)
+                                                    # (--scope tag:dev to go straight to a known range, at:7d for a time window)
 membridge context "continue this morning's discussion"
                                                     # newest handover card injected constantly in a
                                                     # 【workbench】 section; explicit "no injection this
@@ -312,7 +327,7 @@ MCP clients (Cursor `mcp.json`):
 ```
 
 Tools exposed: `memory_add` (optional `kind` tag: fact / procedure / handover),
-`memory_search` (hybrid three-route retrieval; optional `scope` for direct
+`memory_search` (hybrid three-route retrieval; optional `scope` (e.g. `tag:dev`, `at:7d`, `at:2026-09-01..2026-09-20`) for direct
 access to a known range, e.g. `tag:dev`; `as_context=true` returns a budgeted
 Path A injection block — the newest handover card is injected constantly in a
 workbench section — and explicitly reports "no intervention" when there is no
