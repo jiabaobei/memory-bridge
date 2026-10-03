@@ -162,12 +162,18 @@ Qualcomm AI Research 的 MoNe（ICML 2026）给冻结的模型骨干外挂「在
 ```bash
 git clone https://github.com/jiabaobei/memory-bridge.git
 cd memory-bridge
-pip install -e .
+pip install -e .        # 本地可编辑安装。⚠️ 切勿 pip install membridge（见下方警示）
 membridge init               # 强制完成云盘通道配置（默认必做，检测已装同步盘自动配好；
                              # 没有则引导免费云盘；确要跳过需显式确认），
                              # 随后自动接入本机各 AI 平台
 python examples/demo.py      # 90 秒看懂：手机记忆 → 差分包 → PC 无缝继续
 ```
+
+> ⚠️ **`pip install membridge` 装到的不是本项目。** PyPI 上的 `membridge`
+> 是另一个项目抢注的名字，与本仓库无关。memory-bridge **从未在 PyPI 发布**，
+> 一律从 Git 源码装（即上面三行：clone → cd → `pip install -e .`）。
+>
+> 这和项目改名无关——仓库名、模块名、CLI 名都不需要动。
 
 > 为什么第一件事是配云盘？**记忆不上云，跨设备无从谈起。** 早上手机上的讨论，
 > 只有进了云盘通道，办公室的电脑才能接着继续。按论文测算你的记忆一年仅约 1GB，
@@ -407,6 +413,8 @@ README 与文档中引用的实验数字（如 TCR 94.7%、带宽 −89%、token
 ## 参与
 
 ```bash
+git clone https://github.com/jiabaobei/memory-bridge.git   # 从源码装，勿 pip install membridge
+cd memory-bridge
 pip install -e ".[dev]"    # 或不装任何东西：python tests/run_tests.py
 pytest -q
 ```

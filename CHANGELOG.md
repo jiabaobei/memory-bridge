@@ -2,6 +2,12 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.30.2] - 2026-10-03
+
+纯文档（无代码变更）：README 明确安装主路径为 **git clone 源码安装**，并在「快速开始」下方加醒目警示——PyPI 上的 `membridge` 是另一个项目抢注的名字，`pip install membridge` 装到的不是本项目；「参与」段的开发安装同样前置 clone 步骤。
+
+**不改名**：仓库名、Python 包名（`pyproject.toml` 的 `name = "membridge"`）、CLI 名 `membridge` 全部保持原样。memory-bridge 从未在 PyPI 发布过，主分发路径本就是源码 clone，此改动只是把「别被这个名字引到别人的库」写明确，避免新用户第一步就踩坑。
+
 ## [0.30.1] - 2026-09-30
 
 纯文档对齐（无代码变更）：v0.30.0 的两项新能力补进 README——「当前能力」表新增两行（`at:` 时间窗 / 证据计数）、CLI 与 MCP 工具描述补上 `at:` 用法、外部借鉴列表新增 Hindsight 条目（只取结构层 + 逐条不借理由）；「当前能力」小节版本号 v0.27 → v0.30。
