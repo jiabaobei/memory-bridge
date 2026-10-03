@@ -102,7 +102,7 @@ def test_autosync_channel_key_beats_stale_vault():
         _add(store, COFFEE, confidence=0.95)
         lines = []
         assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 0
-        assert any("通道密钥不一致" in ln for ln in lines)  # 分裂告警必须现形
+        assert any("保险库与通道密钥不一致" in ln for ln in lines)  # 分裂告警必须现形
         pkg = [os.path.join(ch, "outbox", f) for f in os.listdir(os.path.join(ch, "outbox"))][0]
         env = json.loads(open(pkg, "rb").read().decode("utf-8"))
         # 包必须能用通道密钥解开（旧实现会用保险库口令加密，对端解不开）
@@ -113,6 +113,44 @@ def test_autosync_channel_key_beats_stale_vault():
         store.close()
     finally:
         if saved:
+            os.environ["MEMBRIDGE_PASSPHRASE"] = saved
+
+
+def test_autosync_channel_key_beats_stale_env():
+    """v0.30.3 回归：通道密钥必须压过环境变量旧口令（真机事故 2026-10-03）。
+
+    v0.29.1 修了保险库那条链，却把 MEMBRIDGE_PASSPHRASE 留在链首——同一个病
+    连犯两次。迁移时设过环境变量的机器，自动任务发包用本机口令，他端用通道
+    密钥解不开，跨设备同步单向不通。本次把三处口径统一成
+    「显式 > 通道密钥 > 环境变量 / 保险库」，本例锁死其中最隐蔽的一条。
+    """
+    saved = os.environ.get("MEMBRIDGE_PASSPHRASE")
+    os.environ["MEMBRIDGE_PASSPHRASE"] = "迁移时留下的旧口令"
+    try:
+        from membridge import channel as _channel
+        from membridge.transport import PassphraseCryptor
+
+        store = _store("手机")
+        ch = tempfile.mkdtemp()
+        store.set_netdisk(ch)
+        _channel.ensure_key(ch)
+        channel_key = _channel.ensure_key(ch, create=False)
+        _add(store, COFFEE, confidence=0.95)
+        lines = []
+        assert sync_agent.run_autosync(store_path=store.path, out=lines.append) == 0
+        assert any("环境变量与通道密钥不一致" in ln for ln in lines)
+        pkg = [os.path.join(ch, "outbox", f) for f in os.listdir(os.path.join(ch, "outbox"))][0]
+        env = json.loads(open(pkg, "rb").read().decode("utf-8"))
+        # 关键断言：包能用通道密钥解开（即发包时没用环境变量口令）
+        payload = json.loads(
+            PassphraseCryptor(channel_key, salt=bytes.fromhex(env["salt"]))
+            .decrypt(env["token"]))
+        assert any(n["content"] == COFFEE for n in payload["nodes"])
+        store.close()
+    finally:
+        if saved is None:
+            os.environ.pop("MEMBRIDGE_PASSPHRASE", None)
+        else:
             os.environ["MEMBRIDGE_PASSPHRASE"] = saved
 
 

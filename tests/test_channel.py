@@ -317,13 +317,15 @@ def test_channel_cli_warns_desktop_only_host():
     assert rc == 0 and "不可达" in buf.getvalue()
 
 
-def test_env_passphrase_shadowing_is_diagnosed():
-    """v0.27.1：环境变量盖住通道密钥时要说明是谁盖的。
+def test_env_passphrase_no_longer_shadows_channel_key():
+    """v0.30.3：环境变量不再盖住通道密钥（真机事故 2026-10-03）。
 
-    真机暴露：环境变量常是迁移后忘了清的旧口令，一盖住通道密钥，取回侧只会跳过
-    差分包报「口令不匹配」，而提示里的 show-passphrase 显示的正是那个错口令——
-    用户照着查只会更迷。本用例只验"说得清"，不验优先级：显式口令优先是 v0.17
-    契约，本次一字未改。
+    v0.27.1 时这条契约是反的：环境变量优先，只做诊断不改行为（「只诊断不改行为——
+    优先级一字未改」）。结果是迁移时设过环境变量的机器，自动任务发包用本机口令，
+    他端用通道密钥解不开。v0.30.3 把三处口径统一成「显式 > 通道密钥 > 环境变量」，
+    通道密钥压过本机历史，「装了就能通」才成立。
+
+    保留 v0.27.1 的全部验证意图：显式口令仍是当次意图、密钥本体不落输出。
     """
     import argparse
 
@@ -350,25 +352,24 @@ def test_env_passphrase_shadowing_is_diagnosed():
                 os.environ["MEMBRIDGE_PASSPHRASE"] = saved
         return out, buf.getvalue()
 
-    # ① 与通道密钥不一致 → 警示，并给出退出路径
-    got, log = resolve(stale)
-    assert got == stale, "显式设了环境变量就该用它（v0.17 优先级契约不变）"
-    assert "盖住了通道密钥" in log and "口令不匹配" in log
-    assert "env -u MEMBRIDGE_PASSPHRASE" in log
+    # ① 环境变量与通道密钥不一致 → 通道密钥赢（这是本次修的核心）
+    got, _ = resolve(stale)
+    assert got == key, "通道密钥必须压过环境变量旧口令，否则跨设备解不开"
 
-    # ② 一致 → 闭嘴，不打扰
-    got, log = resolve(key)
-    assert got == key and log.strip() == ""
+    # ② 未设环境变量 → 走通道密钥
+    got, _ = resolve(None)
+    assert got == key
 
-    # ③ 未设环境变量 → 走通道密钥，同样不该有警示
-    got, log = resolve(None)
-    assert got == key and log.strip() == ""
-
-    # ④ 显式 --passphrase 是当次意图，不算"被环境变量盖住"
+    # ③ 显式 --passphrase 是当次意图，最高优先，不算被环境变量影响
     got, log = resolve(stale, explicit="本次显式口令")
     assert got == "本次显式口令" and log.strip() == ""
 
-    # ⑤ 密钥与口令本体绝不落进输出（只说指纹）
+    # ④ 老式通道（无 channel.key）才回落到环境变量——老用户行为不变
+    legacy = os.path.join(tmp.name, "legacy")
+    os.makedirs(legacy, exist_ok=True)
+    got, _ = cli._resolve_passphrase(argparse.Namespace(passphrase=None), legacy), None
+    assert got is not None, "老式通道应回落到环境变量或新建密钥，不得返回空"
+
+    # ⑤ 密钥与口令本体绝不落进任何输出（只说指纹）
     _, log = resolve(stale)
     assert stale not in log and key not in log
-    assert channel.key_fingerprint(key) in log

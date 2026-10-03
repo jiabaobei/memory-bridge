@@ -455,21 +455,23 @@ def wiring_kwargs(entry: dict) -> dict:
 
 def wiring_passphrase(chan: str, explicit: Optional[str] = None,
                       create: bool = False) -> Optional[str]:
-    """接线描述的口令回落链：显式口令 / 环境变量 → 通道密钥（v0.27）。
+    """接线描述的口令链：显式口令 > 通道密钥 > 环境变量（v0.30.3）。
 
-    与差分包同一条链。同一台设备用两把钥匙往一条通道里写东西，正是 v0.17
-    记下的那次「静默分裂」——接线描述上不能重演。写入端 create=True（没有
-    密钥就生成），读取端 create=False（只读不建，老通道不该被悄悄换钥匙）。
+    与差分包同一条链（v0.30.3 三处统一）。此前是「显式 / 环境变量 → 通道密钥」，
+    本机历史压住跨设备一致性，同一通道写出两种钥匙的包。通道密钥随通道同步，
+    读同一通道的设备自然同钥——它必须压过本机历史，才有「装了就能通」。
+    老式通道（无 channel.key）才回落到环境变量。
+    写入端 create=True（没有密钥就生成），读取端 create=False（只读不建）。
     """
     from . import channel
 
-    p = explicit or os.environ.get("MEMBRIDGE_PASSPHRASE")
-    if p:
-        return p
+    if explicit:
+        return explicit
     try:
-        return channel.ensure_key(chan, create=create)
+        key = channel.ensure_key(chan, create=create)
     except OSError:
-        return None
+        key = None
+    return key or os.environ.get("MEMBRIDGE_PASSPHRASE")
 
 
 _WIRING_NOTES = {

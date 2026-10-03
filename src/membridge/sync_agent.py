@@ -92,20 +92,28 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
         out("⚠️ 尚未配置云盘通道：请先运行 membridge init")
         return 2
     _folder_round(netdisk, out, store.path)
-    # v0.29.1：通道密钥（已存在时）必须压过保险库旧口令——兑现 v0.17 契约
-    # 「密钥随通道走」。此前链序 vault 在前，init 时代设过保险库口令的机器，
-    # 自动任务永远用它发包，而手动 sync 用通道密钥：同一台设备往一条通道里
-    # 发两种钥匙的包（真机事故 2026-09-28：对端「时好时坏」解不开的根源）。
-    # 仅认已存在的通道密钥（create=False）：老式口令通道（无 channel.key）
-    # 行为不变，仍回落保险库；密钥的创建仍只发生在手动 sync。
+    # v0.30.3：通道密钥压过一切本机历史（显式参数除外）。
+    # 事故链（同一个病连修两次还没修干净）：
+    #   v0.29.1 把保险库从链首挪到链尾 —— 修好了「init 时设过保险库口令」的机器，
+    #   但把 MEMBRIDGE_PASSPHRASE 留在前面，于是「迁移时设过环境变量」的机器照旧翻车
+    #   （真机 2026-10-03：环境变量 21 字符盖住通道密钥，自动任务发包他端解不开）。
+    # 根因没被修掉：链序把「本机历史」放在「跨设备一致性」之上。
+    # 通道密钥就躺在通道目录里，每台设备读同一通道自然拿到同一把钥匙——
+    # 零配置即跨设备一致，这是唯一能让「装了就能通」成立的东西。
+    # 保险库与环境变量都是本机历史，跨机互不可见，绝不该盖住它。
+    # 显式参数是当次意图，保留最高优先（老式通道需它）。
     channel_key = _channel.ensure_key(netdisk, create=False)
     vault_p = load_passphrase(store)
-    pass_ = passphrase or os.environ.get("MEMBRIDGE_PASSPHRASE") or channel_key or vault_p
-    if channel_key and vault_p and vault_p != channel_key and pass_ == channel_key:
-        out(
-            "⚠️ 本机保险库口令与通道密钥不一致：本次按通道密钥加解密。"
-            "若他端取不到本机自动发布的包，让对端升级后跑一次 membridge sync。"
-        )
+    env_p = os.environ.get("MEMBRIDGE_PASSPHRASE")
+    pass_ = passphrase or channel_key or env_p or vault_p
+    if channel_key:
+        # 通道密钥在场时，任何本机历史口令都被忽略——只提示一次，不静默。
+        for label, other in (("保险库", vault_p), ("环境变量", env_p)):
+            if other and other != channel_key:
+                out(
+                    "⚠️ 本机%s与通道密钥不一致：自动同步一律用通道密钥"
+                    "（它随通道走，跨设备才能解开）。本机%s已被忽略。" % (label, label)
+                )
     if not pass_:
         # 老式通道且无保险库：维持 v0.17 兜底——此时才允许创建通道密钥
         pass_ = _channel.ensure_key(netdisk)

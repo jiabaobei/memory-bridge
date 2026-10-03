@@ -242,23 +242,34 @@ def cmd_apply(args: argparse.Namespace) -> int:
 def _resolve_passphrase(
     args: argparse.Namespace, root: Optional[str] = None, create: bool = True
 ) -> Optional[str]:
-    """命令行 > 环境变量 > 通道密钥（v0.17：密钥随通道同步，各端零输入零复述）。
+    """命令行 > 通道密钥 > 环境变量（v0.30.3：通道密钥压过本机历史）。
 
-    显式 --passphrase 仍是严格端到端加密，通道密钥自动让位——老通道行为不变。
-    create=False 用于取回侧：通道里本就没有密钥时不新建（那是老式口令通道）。
+    v0.17 是「命令行 > 环境变量 > 通道密钥」——把本机历史放在跨设备一致性
+    之上，真机后果是同一通道里发出两种钥匙的包，他端「时好时坏」（2026-09-28
+    保险库那次、2026-10-03 环境变量那次，同一个病）。通道密钥就躺在通道目录里，
+    每台设备读同一通道自然拿到同一把钥匙，零配置即一致——它必须压过一切
+    本机历史，才有「装了就能通」。
+
+    显式 --passphrase 仍是当次意图，最高优先（老式无密钥通道靠它）。
+    create=False 用于取回侧：通道里本就没有密钥时不新建。
     """
-    p = args.passphrase or os.environ.get("MEMBRIDGE_PASSPHRASE")
-    if p:
-        _note_env_shadow(args, root, p)
-        return p
-    if not root or getattr(args, "plaintext", False):
-        return p  # 显式明文 = 明确放弃加密，此时不再生成/使用通道密钥
     from . import channel
 
+    if getattr(args, "passphrase", None):
+        return args.passphrase
+    if not root or getattr(args, "plaintext", False):
+        return None  # 显式明文 = 明确放弃加密，此时不再生成/使用通道密钥
     try:
-        return channel.ensure_key(root, create=create)
+        key = channel.ensure_key(root, create=create)
     except OSError:
-        return None
+        key = None
+    if key:
+        return key
+    # 老式通道（无 channel.key）才回落到本机历史
+    p = os.environ.get("MEMBRIDGE_PASSPHRASE")
+    if p:
+        _note_env_shadow(args, root, p)
+    return p
 
 
 def _note_env_shadow(
