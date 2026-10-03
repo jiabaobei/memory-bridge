@@ -7,8 +7,10 @@
 - migration=local 的记忆 **永不上云**（PAMS L1，优先级高于一切）
 
 入口：membridge autosync（由 init 注册的 Windows 计划任务每 15 分钟调用；
-也可手动运行）。口令来自口令保险库（vault：Windows 走 DPAPI，Linux / macOS
-走文件保险库，均绑定本机用户账户），用户无需再输入。
+也可手动运行）。v0.31 起加密口令由**源码种子确定性派生**（channel.derive_key），
+各端零输入；本机历史口令（保险库 / MEMBRIDGE_PASSPHRASE 环境变量）一律让位
+于它，且不一致时会明确告警——它们跨机互不可见，盖住派生值只会让同一通道发出
+两种钥匙的包，他端时好时坏。
 """
 
 from __future__ import annotations

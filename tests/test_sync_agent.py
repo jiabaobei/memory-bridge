@@ -192,12 +192,17 @@ def test_autosync_routine_batches_and_local_never_uploaded():
         assert any("批量上云" in ln for ln in lines)
         pkg = [os.path.join(ch, "outbox", f) for f in os.listdir(os.path.join(ch, "outbox"))][0]
         from membridge.transport import PassphraseCryptor
+        from membridge import channel as _ch
 
         env = json.loads(open(pkg, "rb").read().decode("utf-8"))
-        cryptor = PassphraseCryptor("口令abc", salt=bytes.fromhex(env["salt"]))
+        # v0.31：加密口令是**源码派生值**，不是保险库里那个「口令abc」——
+        # 保险库是本机历史，跨机互不可见，让位给派生值才能跨设备互通。
+        cryptor = PassphraseCryptor(_ch.derive_key(), salt=bytes.fromhex(env["salt"]))
         payload = json.loads(cryptor.decrypt(env["token"]))["nodes"]
         assert all(n["content"] != secret.content for n in payload)  # local 永不上云
         assert len(payload) == 5
+        # 且必须明确告诉用户「你设的口令被忽略了」，不能静默丢弃
+        assert any("保险库" in ln and "忽略" in ln for ln in lines), lines
         store.close()
     finally:
         if saved:

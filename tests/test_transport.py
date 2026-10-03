@@ -1,6 +1,7 @@
 """传输通道（网盘中转）测试。"""
 
 import builtins
+import json
 import os
 import sys
 import tempfile
@@ -85,14 +86,21 @@ def test_folder_transport_plaintext_roundtrip():
 
 
 def test_folder_transport_requires_encryption_decision():
+    """v0.31 契约反转：既不给口令也不显式明文，**不再是被拒绝的未决状态**，
+    而是自动用源码种子派生加密。仍然禁止的是「明文与口令同时给」——自相矛盾。
+    """
     a = _store(DEV1)
     _add(a, (COFFEE,))
     ta = transport.FolderTransport(_channel(), a)
+    name = ta.publish()  # 零输入 → 派生加密，不拒绝
+    assert name.endswith(".delta.enc.json")
+    # 再加一条新记忆，否则第二次 publish 因「无新内容」提前返回、走不到校验
+    _add(a, ("第二杯",))
     try:
-        ta.publish()  # 既无口令又不显式明文 → 必须拒绝
-        assert False, "应当拒绝未决状态"
-    except ValueError:
-        pass
+        ta.publish(plaintext=True, passphrase="同时给两者")
+        raise AssertionError("明文 + 口令的组合应被拒绝")
+    except ValueError as e:
+        assert "明文" in str(e)
     a.close()
 
 
@@ -217,19 +225,56 @@ def test_fetch_three_devices_all_receive_same_package():
 
 
 def test_fetch_missing_passphrase_message_is_actionable():
-    """未提供口令时，提示必须说清怎么补，而不是干巴巴一句。"""
+    """用错口令时，提示必须说清怎么补，而不是干巴巴一句（v0.31 更新措辞）。
+
+    v0.31 起「完全不传口令」不再是问题——库层自动用源码种子派生。所以这里测的是
+    **传了但传错**：此时必须仍然报可执行的错。措辞不再建议设 MEMBRIDGE_PASSPHRASE
+    （那条路 v0.30.3 起就是错的，且本机环境变量已删），改为指向派生/显式参数。
+    """
     a = _store(DEV1)
     _add(a, (COFFEE,))
     ch = _channel()
     transport.FolderTransport(ch, a).publish(passphrase="正确口令")
 
     b = _store(DEV2)
-    result = transport.FolderTransport(ch, b).fetch()
+    result = transport.FolderTransport(ch, b).fetch(passphrase="错误的口令")
     assert result["applied"] == []
     reason = result["skipped"][0][1]
-    assert "PASSPHRASE" in reason, reason  # 必须指名环境变量
+    # 必须可执行：点名「同一口令」这件事，并给出正确做法
+    assert "同一口令" in reason, reason
+    assert "--passphrase" in reason, reason
     a.close()
     b.close()
+
+
+def test_fetch_without_passphrase_uses_derived_key():
+    """v0.31 核心承诺：完全不传口令也能取回——派生在**库层**生效。
+
+    这条曾真实地坏过：派生只做在 CLI 的 _resolve_passphrase 里，库层直连
+    （自建 agent / 脚本 / 任何绕过 CLI 的调用）拿到 None 就报「需要口令」，
+    于是「装了项目就通」在最常见的调用路径上并不成立。
+    """
+    a = _store(DEV1)
+    _add(a, (COFFEE,))
+    ch = _channel()
+    transport.FolderTransport(ch, a).publish()  # 不传口令 → 派生加密
+
+    b = _store(DEV2)
+    result = transport.FolderTransport(ch, b).fetch()   # 不传口令 → 派生解密
+    assert not [s for s in result["skipped"] if "需要口令" in s[1]], result["skipped"]
+    assert [n for n in b.all_nodes() if COFFEE in n.content], "派生密钥应能解开"
+    a.close()
+    b.close()
+
+
+def test_publish_without_passphrase_encrypts_with_derived_key():
+    """v0.31：不传口令的发布**仍然加密**（默认加密这条底线没松）。"""
+    a = _store(DEV1)
+    _add(a, (COFFEE,))
+    ch = _channel()
+    name = transport.FolderTransport(ch, a).publish()
+    assert name.endswith(".delta.enc.json"), "默认必须落密文包，不能退化成明文"
+    a.close()
 
 
 def test_fetch_oserror_goes_to_errors_and_retries():
@@ -283,3 +328,72 @@ def test_fetch_wrong_passphrase_message_is_actionable():
     assert "show-passphrase" in reason, reason
     a.close()
     b.close()
+
+
+# ---------- v0.31：手动搬运（delta/apply）也必须能用手动口令 ----------
+#
+# 主次关系：自动派生是默认、是第一选项（不给口令就用源码种子派生，各端零输入）；
+# 手动口令是**特定情况下的选择**——把记忆拷到移动硬盘 / U 盘 / 离线归档，或给
+# 一台没装记忆桥的机器解密。此前 delta/apply 绕过了口令体系、直接写明文 JSON，
+# 恰恰是最需要手动加密的搬运路径反而没有加密。
+
+def test_manual_seal_uses_explicit_passphrase_and_hides_content():
+    from membridge import cli
+    if not HAS_CRYPTO:
+        print("\nSKIP: 未安装 cryptography")
+        return
+    payload = json.dumps({"nodes": [{"content": COFFEE}]})
+    enc = cli._seal_manual(payload, "我的移动硬盘口令", False)
+    assert COFFEE not in enc, "手动搬运的包不该出现明文内容"
+    env = json.loads(enc)
+    assert env["fmt"] == transport.ENVELOPE_FMT
+    # 显式口令优先于源码派生
+    back = cli._unseal_manual(enc, "我的移动硬盘口令")
+    assert json.loads(back)["nodes"][0]["content"] == COFFEE
+
+
+def test_manual_seal_without_passphrase_falls_back_to_derived():
+    """不给口令时也必须是密文（自动派生），不是明文——默认加密这条底线不因手动而松。"""
+    from membridge import cli
+    from membridge import channel as _ch
+    if not HAS_CRYPTO:
+        print("\nSKIP: 未安装 cryptography")
+        return
+    payload = json.dumps({"nodes": [{"content": COFFEE}]})
+    enc = cli._seal_manual(payload, None, False)
+    assert COFFEE not in enc
+    assert json.loads(cli._unseal_manual(enc, None))["nodes"][0]["content"] == COFFEE
+    # 派生值与库层用的是同一把，两边能对上
+    assert json.loads(
+        cli._unseal_manual(enc, _ch.derive_key())
+    )["nodes"][0]["content"] == COFFEE
+
+
+def test_manual_plaintext_is_explicit_opt_in():
+    """明文必须显式要求，且不被加密路径意外拦下。"""
+    from membridge import cli
+    payload = json.dumps({"nodes": [{"content": COFFEE}]})
+    assert cli._seal_manual(payload, None, True) == payload
+
+
+def test_manual_unseal_passes_through_plain_json():
+    """旧版本生成的明文差异包仍应能直接并入，不能因加了加密就拒收。"""
+    from membridge import cli
+    payload = json.dumps({"nodes": [{"content": COFFEE}]})
+    assert cli._unseal_manual(payload, None) == payload
+
+
+def test_manual_wrong_passphrase_gives_actionable_hint():
+    """错口令必须说清怎么办，且**不能把口令本身打印出来**。"""
+    from membridge import cli
+    if not HAS_CRYPTO:
+        print("\nSKIP: 未安装 cryptography")
+        return
+    enc = cli._seal_manual(json.dumps({"nodes": []}), "正确的长口令", False)
+    try:
+        cli._unseal_manual(enc, "错的口令")
+        raise AssertionError("错口令应当报错")
+    except SystemExit as e:
+        msg = str(e)
+        assert "--passphrase" in msg, msg
+        assert "错的口令" not in msg, "报错里绝不能回显口令"

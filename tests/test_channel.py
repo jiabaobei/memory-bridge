@@ -176,14 +176,54 @@ def test_channel_cli_unconfigured():
 # ---------------- v0.17：通道密钥 + 设备心跳 ----------------
 
 def test_channel_key_travels_with_channel():
-    """通道密钥随通道走：先到的端生成，后来的端拿到同一把——零输入零复述。"""
+    """v0.31：通道密钥改为**从源码种子确定性派生**，不再是通道目录里的文件。
+
+    契约反转的原因：密钥的源头若是一个需要先同步过来的文件，那「谁有那把钥匙」
+    就成了要向人解释的事，与「装了项目就该通」矛盾。现在各端各自算、结果逐字节
+    相同，跨设备天然同钥，且通道目录里**不再存放明文口令**。
+    """
     root = tempfile.mkdtemp(prefix="membridge-netdisk-")
     k1 = channel.ensure_key(root)
     k2 = channel.ensure_key(root)
-    assert k1 and k1 == k2, "同一通道目录必须解析出同一把密钥"
+    assert k1 and k1 == k2, "同一份源码必须派生出同一把密钥"
+    assert k1 == channel.derive_key(), "ensure_key 必须就是派生值（无文件时）"
     assert channel.key_fingerprint(k1) == channel.key_fingerprint(k2)
-    assert Path(root, channel.KEY_FILE).exists()
+    # 关键：不再往通道目录写明文口令
+    assert not Path(root, channel.KEY_FILE).exists(), "通道目录不该再存明文密钥"
     assert channel.key_fingerprint(k1) not in k1  # 输出指纹不等于泄露密钥
+
+
+def test_derive_key_is_deterministic_across_calls():
+    """派生必须是纯函数：同种子同结果，否则跨设备各算各的必然对不上。"""
+    a = channel.derive_key()
+    b = channel.derive_key()
+    assert a == b
+    assert len(a) == 43, "Fernet 口令形态：32 字节 base64 去 padding"
+    assert "=" not in a, "base64 padding 必须去掉才能稳定拼接"
+
+
+def test_derive_key_changes_with_seed():
+    """换种子必须换密钥——否则改种子等于没改。"""
+    base = channel.derive_key()
+    other = channel.derive_key(seed="另一个种子")
+    assert base != other
+    assert channel.derive_key(salt="另一个盐") != base
+
+
+def test_old_channel_key_file_still_wins_and_reports_mismatch():
+    """旧通道（目录里已有 channel.key）必须继续用它，且明确报告与派生值不一致。
+
+    不自动换钥匙：那样会让历史包集体解不开，把「口令不匹配」变得更难懂。
+    只报告，让人决定何时轮换。
+    """
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    legacy = "Rng4rNLMk-ZnsywbGzPfyrX1kGaI92DCW0x8N-QKzr8"
+    Path(root, channel.KEY_FILE).write_text(legacy, encoding="utf-8")
+    assert channel.ensure_key(root) == legacy, "旧通道必须用旧密钥"
+    assert channel.key_source_mismatch(root) == legacy, "且必须报告不一致"
+    # 新鲜通道无此文件 → 不报告
+    fresh = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    assert channel.key_source_mismatch(fresh) is None
 
 
 def test_heartbeat_registers_device_without_publishing():
@@ -237,7 +277,11 @@ def test_passphrase_free_encrypted_roundtrip():
 
 
 def test_channel_cli_shows_fingerprint_never_secret():
-    """channel 输出只给指纹不给密钥——AI 无法再把口令念进聊天记录。"""
+    """channel 输出只给指纹不给密钥——AI 无法再把口令念进聊天记录。
+
+    v0.31：密钥来自源码派生（通道目录里已无 channel.key），故改为断言「派生出的
+    密钥本体不出现在输出里」。这层保护没变——变的只是密钥从哪来。
+    """
     root = tempfile.mkdtemp(prefix="membridge-netdisk-")
     a = _store(DEV1)
     _remember(a, COFFEE)
@@ -248,12 +292,29 @@ def test_channel_cli_shows_fingerprint_never_secret():
     with contextlib.redirect_stdout(buf):
         cli.cmd_channel(type("A", (), {"db": a._tmp.name + "/mem.db", "device": None})())
     out = buf.getvalue()
-    key = Path(root, channel.KEY_FILE).read_text(encoding="utf-8")
-    assert "通道密钥: 已启用" in out
-    assert key not in out, "通道命令绝不打印密钥本体"
+    key = channel.derive_key()
+    assert "通道密钥: 指纹" in out
+    assert channel.key_fingerprint(key) in out, "应显示指纹便于各端核对"
+    assert key not in out, "channel 命令绝不打印密钥本体"
     # 心跳名册：本机在册、容器指纹一致
     assert DEV1 in out and "（本机）" in out
     assert "✅ 各端容器指纹一致" in out
+
+
+def test_channel_cli_warns_on_legacy_key_mismatch():
+    """通道目录里存着旧密钥时，体检必须明确告警——不静默、不自动换钥匙。"""
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    a = _store(DEV1)
+    _remember(a, COFFEE)
+    FolderTransport(root, a).publish(plaintext=True)
+    Path(root, channel.KEY_FILE).write_text("旧通道遗留的密钥", encoding="utf-8")
+    a.set_netdisk(root)
+    a.close()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cli.cmd_channel(type("A", (), {"db": a._tmp.name + "/mem.db", "device": None})())
+    out = buf.getvalue()
+    assert "旧密钥" in out and "轮换" in out, out
 
 
 def test_show_passphrase_masked_by_default():

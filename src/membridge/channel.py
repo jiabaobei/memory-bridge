@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -27,6 +28,54 @@ from typing import Dict, List, Optional, Tuple
 CHANNEL_FILE = "channel.json"
 KEY_FILE = "channel.key"
 DEVICES_DIR = "devices"
+
+# ---------------------------------------------------------------------------
+# 通道密钥的种子（v0.31）
+#
+# 为什么种子写在源码里，而不是只让 channel.key 躺在网盘里：
+#   旧设计的钥匙只在通道文件夹中，于是「钥匙的源头」是一个用户必须先拥有的
+#   文件——新设备装完项目、读了文档，仍然得有人把网盘文件夹同步过去才能通，
+#   而「谁有那把钥匙」本身就成了要向人解释的事。这与「装了项目就该通」矛盾。
+#
+# 改成种子在源码里派生后：
+#   - 确定性：同一份源码、同一段种子，任何设备、任何语言、任何时间派生出的
+#     密钥逐字节相同 → 跨设备天然同钥，不需要协商、不需要传文件。
+#   - 可自证：README 公布算法与全部参数，任何 AI / 任何语言的实现者都能独立
+#     算出同一把钥匙，并解开 README 里的自检密文确认自己没算错。
+#   - 不明文：种子不是钥匙本身，它是 PBKDF2 的输入。密钥是它的单向派生值，
+#     通道目录里不再需要存放明文口令。
+#
+# 诚实说明（不要在文档里含糊）：种子提交进仓库，意味着**能拿到这份源码的人
+# 就能算出通道密钥**。这是「零配置」与「密钥保密」之间的逻辑取舍——要让
+# 任何人读完文档就能自己动手，派生输入就不能是秘密。这里选择零配置，因为
+# 密钥的职责是「让各设备用同一把钥匙、且云盘只见密文」，不是「挡住能读源码的
+# 人」。真需要挡住，得靠云盘目录本身的访问权限（那才是通道文件夹的职责）。
+# ---------------------------------------------------------------------------
+CHANNEL_SEED = "membridge/mb-639d44f1/jiabaobei"
+# 固定盐：派生必须跨设备、跨时间、跨 Python 版本完全一致，故不能用随机盐。
+# 这里的取舍是「确定性」压过「抗彩虹表」——攻击者要拿到源码才能用这个盐，
+# 而源码本来就是公开的，再给随机盐并不会提高安全边界。
+SEED_SALT = "membridge.channel.v1"
+KDF_ITERATIONS = 200_000
+# 自检串明文：用派生密钥加密它，AI 解开即证明派生正确。明文是公开的，
+# 它的作用是「算错了能立刻发现」，不是秘密。
+SELF_CHECK_PLAIN = "membridge-channel-ok"
+
+
+def derive_key(seed: str = CHANNEL_SEED, salt: str = SEED_SALT) -> str:
+    """由种子确定性派生通道密钥（43 字符，Fernet 可直接用作口令）。
+
+    算法（README 逐字公布，AI 可用任何语言独立复现）：
+        dk = PBKDF2-HMAC-SHA256(utf8(seed), utf8(salt), 200000, dkLen=32)
+        key = base64.urlsafe_b64encode(dk) 去尾部 '='
+
+    刻意只用标准库：派生是零配置承诺的一部分，AI 不该先判断装没装
+    cryptography 才能算出钥匙。
+    """
+    dk = hashlib.pbkdf2_hmac(
+        "sha256", seed.encode("utf-8"), salt.encode("utf-8"), KDF_ITERATIONS, 32
+    )
+    return base64.urlsafe_b64encode(dk).decode("ascii").rstrip("=")
 
 
 def manifest_path(root: str) -> str:
@@ -164,14 +213,19 @@ def key_path(root: str) -> str:
 
 
 def ensure_key(root: str, create: bool = True) -> Optional[str]:
-    """通道密钥随通道走：没有就生成，随网盘同步到各端（v0.17）。
+    """通道密钥：从源码种子确定性派生（v0.31），通道目录里的文件只当旧缓存。
 
-    各端零输入、零托管、零复述——用户与 AI 都不接触密钥，漏洞「AI 把口令
-    念进聊天」从根上消失。安全档位：默认防明文落地 / 防误分享（密钥在网盘里）；
-    需要严格端到端加密时另设 --passphrase，此时口令优先、通道密钥自动让位。
+    v0.31 之前密钥是 `os.urandom(32)` 随机生成、只存在于通道文件夹，于是
+    「密钥的源头」变成了一个必须先同步过来的文件——新设备装完项目读了文档仍
+    未必有它，而「谁有那把钥匙」本身成了要向人解释的事。改为从源码种子派生后，
+    各端各自算、结果逐字节相同，跨设备天然同钥，且**不需要任何输入**。
 
-    create=False：只读不建。取回侧用它——v0.16 及更早的通道本来就用口令，
-    不该因为升级而悄悄换钥匙（那样只会把「口令不匹配」的提示变得更难懂）。
+    优先级：
+      1. 通道目录里的 channel.key —— 旧通道的密钥，可能与派生值不同。
+         读到就用它，并记下不一致（见 key_source_mismatch），因为让旧通道
+         悄悄换钥匙只会把「口令不匹配」变得更难懂。
+      2. 源码种子派生 —— 默认路径。create=False 时也可用：它不写任何文件，
+         是纯函数，所以取回侧同样能算。
     """
     final = key_path(root)
     try:
@@ -181,15 +235,24 @@ def ensure_key(root: str, create: bool = True) -> Optional[str]:
             return key
     except OSError:
         pass
-    if not create:
+    # 通道目录没有密钥文件 → 从种子派生（纯计算，不落盘）
+    return derive_key()
+
+
+def key_source_mismatch(root: str) -> Optional[str]:
+    """通道目录里的密钥与种子派生值不一致时返回该密钥，否则 None。
+
+    只报告、不改写。旧通道升级后必然不一致——这是预期的，不能自动换钥匙
+    （那会让历史包集体解不开），必须由人决定何时轮换。
+    """
+    try:
+        with open(key_path(root), "r", encoding="utf-8") as f:
+            onfile = f.read().strip()
+    except OSError:
         return None
-    os.makedirs(root, exist_ok=True)
-    key = base64.urlsafe_b64encode(os.urandom(32)).decode("ascii").rstrip("=")
-    tmp = final + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(key)
-    os.replace(tmp, final)
-    return key
+    if not onfile or onfile == derive_key():
+        return None
+    return onfile
 
 
 def key_fingerprint(key: str) -> str:

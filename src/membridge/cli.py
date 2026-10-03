@@ -198,21 +198,74 @@ def _safe_delta_file(p: str, *, for_write: bool,
     return norm
 
 
+def _seal_manual(payload: str, passphrase: Optional[str], plaintext: bool) -> str:
+    """手动搬运（delta --out / 网盘包）时的加封。
+
+    主次关系：**自动派生是默认且是主流**——不给口令时用源码种子派生，各端零输入。
+    手动口令是**特定情况下的选择**，不是退路：把记忆拷到移动硬盘、U 盘、离线归档，
+    或给一台没装记忆桥的机器解密时用它。这里与 publish/fetch 用同一套信封格式
+    （`membridge-delta-enc-v1`），所以同一个口令两边都能读。
+    """
+    if plaintext:
+        return payload
+    from . import channel
+    from .transport import PassphraseCryptor
+
+    key = passphrase or channel.derive_key()
+    cryptor = PassphraseCryptor(key)
+    return json.dumps(
+        {
+            "fmt": transport.ENVELOPE_FMT,
+            "salt": cryptor.salt.hex(),
+            "token": cryptor.encrypt(payload),
+        },
+        ensure_ascii=False,
+    )
+
+
+def _unseal_manual(raw: str, passphrase: Optional[str]) -> str:
+    """解封手动搬运的差异包：认得密文信封就用口令解，明文 JSON 原样返回。"""
+    try:
+        env = json.loads(raw)
+    except ValueError:
+        return raw  # 不是 JSON，原样交给调用方（明文包）
+    if not isinstance(env, dict) or env.get("fmt") != transport.ENVELOPE_FMT:
+        return raw
+    from . import channel
+    from .transport import PassphraseCryptor
+
+    key = passphrase or channel.derive_key()
+    try:
+        return PassphraseCryptor(key, salt=bytes.fromhex(env["salt"])).decrypt(
+            env["token"]
+        )
+    except Exception as exc:
+        raise SystemExit(
+            "解密失败：该差异包是用口令加密的，本次用的口令不对。\n"
+            "  · 搬运时给了口令 → 取回时要传同一个：--passphrase 你的口令\n"
+            "  · 没给口令（自动派生）→ 本机源码须与发送端为同一份（派生值一致）\n"
+            f"  · 底层错误：{exc}"
+        )
+
+
 def cmd_delta(args: argparse.Namespace) -> int:
     local = _open_store(args)
     remote = MemoryStore(args.remote_db)
     delta = dss.compute_delta(local, remote)
     payload = delta.to_json()
     full = json.dumps([n.to_dict() for n in local.all_nodes()], ensure_ascii=False)
+    body = _seal_manual(payload, getattr(args, "passphrase", None),
+                        getattr(args, "plaintext", False))
     if args.out:
         out_path = _safe_delta_file(
             args.out, for_write=True,
             allowed_bases=[os.path.dirname(os.path.abspath(local.path)), os.getcwd()],
         )
-        Path(out_path).write_text(payload, encoding="utf-8")
-        print(f"差异包已写入 {out_path}")
+        Path(out_path).write_text(body, encoding="utf-8")
+        enc = "（已加密）" if body is not payload else "（明文）"
+        print(f"差异包已写入 {out_path} {enc}")
     else:
-        print(payload)
+        print(body)
     ratio = (len(payload) / len(full) * 100) if full else 0.0
     print(
         f"节点 {len(delta.nodes)} 条，边 {len(delta.edges)} 条；"
@@ -225,7 +278,9 @@ def cmd_apply(args: argparse.Namespace) -> int:
     store = _open_store(args)
     in_path = os.path.normpath(_safe_delta_file(args.file, for_write=False))
     with open(in_path, "r", encoding="utf-8") as f:
-        delta = dss.Delta.from_json(f.read())
+        raw = f.read()
+    body = _unseal_manual(raw, getattr(args, "passphrase", None))
+    delta = dss.Delta.from_json(body)
     result = dss.apply_delta(store, delta)
     if result.get("rejected"):
         print(f"已拒绝该差异包：嵌入器不一致"
@@ -728,8 +783,15 @@ def cmd_channel(args: argparse.Namespace) -> int:
     print(f"通道里出现过的其他设备: {'、'.join(others)}" if others
           else "通道里还没见过其他设备的差分包")
     # v0.17：密钥指纹 + 设备心跳名册——「各端是不是同一条通道」从此一眼可查
-    print(f"通道密钥: 已启用（指纹 {channel.key_fingerprint(channel.ensure_key(netdisk))}）"
-          f"——随通道同步，各端零输入零复述；要严格端到端时另设 --passphrase")
+    # v0.31：密钥从源码种子派生，不再靠通道目录里的文件流转
+    _key = channel.ensure_key(netdisk)
+    _mismatch = channel.key_source_mismatch(netdisk)
+    print(f"通道密钥: 指纹 {channel.key_fingerprint(_key)}"
+          f"——由源码种子确定性派生，各端零输入零复述；要严格端到端时另设 --passphrase")
+    if _mismatch:
+        print(f"  ⚠️ 通道目录里存着旧密钥（指纹 "
+              f"{channel.key_fingerprint(_mismatch)}），与派生值不一致。已按旧密钥继续"
+              f"（否则历史包会集体解不开）。要改用派生值需轮换通道密钥。")
     roster = channel.roster(netdisk)
     if roster:
         print(f"通道内设备（心跳 {len(roster)} 台）：")
@@ -1108,10 +1170,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     p = sub.add_parser("delta", help="生成本库 → 另一设备的 DSS 差异包")
     p.add_argument("remote_db", help="对端设备记忆库路径（本机模拟）")
     p.add_argument("--out", default=None, help="差异包输出文件（默认打印）")
+    p.add_argument("--passphrase", default=None,
+                   help="加密口令（手动搬运时用：拷到移动硬盘/U 盘/离线归档时加一把，"
+                        "取回时传同一把。不给则由源码种子自动派生）")
+    p.add_argument("--plaintext", action="store_true",
+                   help="产出明文 JSON（不推荐：记忆内容将完全暴露）")
     p.set_defaults(func=cmd_delta)
 
     p = sub.add_parser("apply", help="把 DSS 差异包并入本库")
-    p.add_argument("file", help="差异包 JSON 文件")
+    p.add_argument("file", help="差异包 JSON 文件（密文信封或明文 JSON 都接受）")
+    p.add_argument("--passphrase", default=None,
+                   help="解密口令：与生成时的同一把；生成时未给口令则省略")
     p.set_defaults(func=cmd_apply)
 
     p = sub.add_parser("publish", help="把本设备未发布的记忆差分包写入同步文件夹（网盘中转）")

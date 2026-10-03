@@ -101,10 +101,14 @@ class FolderTransport:
         用于云盘侧差分包丢失/被清理后重建通道——否则本地仍认为"已发布"，
         记忆会被永久锁死、再也推不出去。
         """
-        if cryptor_needed(passphrase, plaintext):
+        # v0.31：没显式给口令就用源码种子派生，与 fetch 同一套兜底。
+        # 保持「默认加密」不变——只是加密的钥匙不再要求调用方提供。
+        # 顺序要紧：明文模式不派生，否则 plaintext=True 会被自己抛的错拦下。
+        if not plaintext:
+            passphrase = passphrase or channel.derive_key()
+        if plaintext and passphrase:
             raise ValueError(
-                "出于隐私安全，写入网盘默认必须加密：请提供 passphrase，"
-                "或显式确认 plaintext=True（明文，不推荐）"
+                "明文写入网盘需显式确认：传 plaintext=True 且不指定 passphrase"
             )
         if delta is None:
             delta = delta_unsent(
@@ -216,13 +220,13 @@ class FolderTransport:
                     env = json.loads(raw)
                     if env.get("fmt") != ENVELOPE_FMT:
                         raise ValueError("未知信封格式")
-                    if not passphrase:
-                        raise ValueError(
-                            "已加密的差分包需要口令：请加 --passphrase，"
-                            "或设置环境变量 MEMBRIDGE_PASSPHRASE"
-                        )
+                    # v0.31：没显式给口令就用源码种子派生。原先只在 CLI 层
+                    # (_resolve_passphrase) 做派生，库层直连（自建 agent、脚本、
+                    # 任何绕过 CLI 的调用）拿到 None 就报「需要口令」——派生只做在
+                    # 一层，等于承诺「装了项目就通」在最常见的调用路径上并不成立。
+                    key = passphrase or channel.derive_key()
                     cryptor = PassphraseCryptor(
-                        passphrase, salt=bytes.fromhex(env["salt"])
+                        key, salt=bytes.fromhex(env["salt"])
                     )
                     try:
                         payload = cryptor.decrypt(env["token"])
@@ -291,5 +295,9 @@ def _safe_device(device: str) -> str:
 
 
 def cryptor_needed(passphrase: Optional[str], plaintext: bool) -> bool:
-    """是否处于"既不给口令又不显式明文"的未决状态。"""
+    """是否处于"既不给口令又不显式明文"的未决状态。
+
+    v0.31 起保留但**不再用于 publish**：publish 已改为在缺口令时自动派生，
+    「未决」这个状态在发布路径上不再存在。留此函数供外部/测试判断取回侧状态。
+    """
     return passphrase is None and not plaintext
