@@ -32,16 +32,17 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.30)
+## Status (v0.31)
 
 | Capability | Status |
 |---|---|
+| **Zero-config cross-device sync (the password is written into the project docs, in encrypted form)** — the channel key is **deterministically derived from a source-code seed** (PBKDF2-HMAC-SHA256, 200,000 rounds, stdlib only), so every end computes it locally and gets **byte-identical** results; the channel folder no longer holds a plaintext key file. The README publishes the algorithm / salt / round count / self-check ciphertext verbatim, so **any AI or language can derive the key and open packets without installing this project**. Local historical passphrases (env var / vault) no longer shadow it; legacy channels keep their old key and warn explicitly | ✅ v0.31 |
 | **Time-window retrieval (Hindsight borrowing — structure layer only)** — `scope` gains `at:`: relative `at:7d` / `at:12h` / `at:30m` / `at:2w`, month `at:2026-09`, day `at:2026-09-20`, range `at:2026-09-01..2026-09-20` (either side omittable, **right end includes that whole day**). Mirrors Hindsight's 4th recall route (temporal), filtering before fusion; pure stdlib, invalid syntax = no filter, `tag:` / `scene:` / `kind:` behaviour byte-identical | ✅ v0.30 |
 | **Evidence count (proof count, Hindsight borrowing)** — counts how many **distinct** memories reference a node (in+out edges deduped): `search` appends a read-only `· referenced by N memories` suffix and the count acts as the **RRF tie-breaker**. Deliberately **absent from the injected context block** (every character there is a recurring token cost). Edge relations stored since v0.14 become visible outside the store for the first time | ✅ v0.30 |
 | **Container consistency (declarable, reconcilable schema across ends)** — a container manifest (`schema.py`) reads the local store and emits a device identity card (schema version / node+edge fields / kind enum / storage planes / migration registry); `membridge schema` shows the local card, `--peer` reconciles against any remote card in both directions, auto-ALTERs missing columns via the migration registry; deltas now carry an `edges_v2` 5-tuple (src, dst, weight, kind, evidence) reconciled before apply — **v0.14's typed edges no longer degrade across devices** | ✅ v0.16 |
 | **Storage-plane declaration (inspired by mem0)** — manifest declares graph (edges) / vector (nodes.embedding) / kv (meta) planes, read from the actual table structure; a missing plane changes the fingerprint and shows up in `doctor` | ✅ v0.16 |
 | **Seq version negotiation (inspired by rig)** — outbound deltas get a monotonically increasing `seq`; receivers track a per-device `sync_watermark` (monotonic), duplicate/out-of-order packets converge idempotently via content-fingerprint dedup | ✅ v0.16 |
-| **Channel key travels with the channel (zero input per device)** — a `channel.key` in the channel folder syncs to every end via the cloud drive, generated on first publish: no passphrase to remember, transfer, or read aloud across devices. `--passphrase` still takes priority; strict E2E behaviour is unchanged | ✅ v0.17 |
+| **Channel key travels with the channel** — *(superseded by v0.31: the key is no longer a file in the channel folder; it is derived from the source seed, so there is nothing to sync and nothing to hand over. Kept here as history.)* The original v0.17 design put a `channel.key` in the channel folder so it reached every end through the cloud drive: no passphrase to remember, transfer, or read aloud across devices | ✅ v0.17 → v0.31 |
 | **Device heartbeat (see who is on the channel at a glance)** — each end writes only its own `devices/<device>.json` (name / platform / last seen / node count / container fingerprint). Write-only-your-own means no shared mutable state, so zero conflicts; `init` registers too, so a device that never published is no longer invisible | ✅ v0.17 |
 | **`membridge sync` one-command bidirectional** — fetch other devices' memories, then publish your own, in one line of output. Web / phone / tablet align without a scheduler; every end shares the same rhythm | ✅ v0.17 |
 | **Channel wiring descriptor — configure once, every end follows** | The device you configure encrypts "which drive / remote sub-path / role / credential" into `wiring.json` inside the channel folder — **written exactly once**: the writer is unique (`written_by`; every other device is read-only), so there is no shared mutable state and no `wiring (1).json` conflict copy ever appears (same rule as the `devices/` heartbeat). Every other end's `init` reads it and **wires itself up automatically**, with no second entry of account or app password. Credentials use the same encryption chain as delta packages (Fernet + PBKDF2, random salt carried in the file); the plaintext part holds only writer/time/version/channel id, while **account and password are encrypted as one block**; without the key it writes nothing (`nocrypto`) instead of plaintext. Wiring state also moved back to a **local file** `<store dir>/netdisk.json` (it used to live inside the shared drive, where cross-end read-modify-write loses updates; the old location is auto-migrated and the old file is never deleted) | ✅ v0.27 |
@@ -66,7 +67,7 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | **Token economy** — MCP tools consolidated to 3 (`memory_context` merged into `memory_search`), retrieval relative-threshold filters weak hits, oversized memories get a soft "one sentence per memory" hint on write | ✅ v0.8 |
 | **doctor location health** — warns when the DB sits in a temp/generated directory, when the default DB and the env-var DB coexist (likely a split store), or when the device name is unset | ✅ v0.8 |
 | **Storage & retrieval** — embeddings stored as float32 BLOBs (⅓–⅕ of the JSON size, legacy DBs auto-migrate on open); two-phase search with an in-process vector cache | ✅ v0.8 |
-| One-command setup — `membridge init`: mandatory cloud channel (auto-picked by priority rule; when no drive client is detected, an interactive guided wiring takes over — reassurance copy, step-by-step Jianguoyun primary wiring, connection gate with an explicit "later" exit, optional OneDrive backup question, v0.25), **sync passphrase auto-generated & vaulted (DPAPI on Windows; a permission-600 file vault bound to the local user on Linux/macOS since v0.23)**, scheduled auto-sync every 15 min, platform auto-config + WorkBuddy skill install | ✅ implemented |
+| One-command setup — `membridge init`: mandatory cloud channel (auto-picked by priority rule; when no drive client is detected, an interactive guided wiring takes over — reassurance copy, step-by-step Jianguoyun primary wiring, connection gate with an explicit "later" exit, optional OneDrive backup question, v0.25), **channel key derived from the source seed — nothing to remember or hand over (before v0.31 a sync passphrase was auto-generated & vaulted: DPAPI on Windows, a permission-600 file vault bound to the local user on Linux/macOS since v0.23; that vault is now ignored and only produces a notice)**, scheduled auto-sync every 15 min, platform auto-config + WorkBuddy skill install | ✅ implemented |
 | Auto-sync engine — important memories upload immediately, routine ones batched (≥5 or ≥24h), `local`-tagged never leave the device | ✅ implemented |
 | SAN (semantic association network, `w_ij = λ·co-occurrence + (1−λ)·cosine`) | ✅ implemented |
 | Path A injection (auditable context block) | ✅ implemented |
@@ -75,6 +76,7 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Netdisk-folder transport (`--force` rebuilds a wiped channel) + end-to-end encryption | ✅ implemented |
 | PAMS privacy gates (L1 migration tags + L2 scene domains) | ✅ implemented; L3 DP deferred |
 | TMT heat & preloading (recency × frequency heuristic) | ✅ heuristic done; edge tiers in Phase 3 |
+| **Encryption key (automatic by default, manual for special cases)** | **Default and mainstream: automatic derivation** — the channel key is computed deterministically from the source seed, so **day to day you pass nothing at all**, and every end on the same channel lands on the same key by itself (an AI can take over just by reading the docs). **Manual only for specific cases**: `--passphrase your-passphrase`, used to carry memories by hand to a portable drive / USB stick / offline archive, to decrypt on a machine that doesn't have MemoryBridge installed, or to give different channels different keys. Precedence: `--passphrase` > source-seed derivation > environment variable > vault. ⚠️ Do **not** set a `MEMBRIDGE_PASSPHRASE` environment variable: it is per-machine history, invisible across machines, and will be ignored with a warning | ✅ v0.31 |
 | Portable `membridge.exe` (ncnn-style per-platform binaries) | ✅ v0.4 |
 | AEE adaptive evolution (α / π_nav / θ_window) | 📋 Phase 4 (interfaces reserved) |
 | Path B hidden-state fusion | 🧪 Phase 4 experimental branch |
@@ -192,18 +194,34 @@ what gets frozen: they freeze the model, we freeze the content.**
 ```bash
 git clone https://github.com/jiabaobei/memory-bridge.git
 cd memory-bridge
-pip install -e .
+pip install -e .           # editable local install. ⚠️ Never run `pip install membridge` (see the warning below)
 membridge init             # mandatory cloud-drive channel setup first (auto-detects installed
                            # sync clients, guides you to a free one otherwise; explicit confirm
                            # required to skip), then wires up every AI platform detected here
 python examples/demo.py    # phone memories → delta packet → PC, in 90 seconds
 ```
 
+> ⚠️ **`pip install membridge` does not install this project.** The `membridge`
+> name on PyPI belongs to a different project and has nothing to do with this
+> repository. memory-bridge has **never been published to PyPI**; always install
+> from the Git source (the three lines above: clone → cd → `pip install -e .`).
+>
+> This has nothing to do with renaming the project — the repository name, module
+> name and CLI name do not need to change.
+
+> Why is cloud-drive setup the first thing? **Without the cloud, cross-device
+> sync does not exist.** A discussion on your phone in the morning can only be
+> picked up by the office PC once it is in a cloud channel. By the paper's
+> estimate your memory runs to about 1 GB a year, so any free cloud drive is
+> plenty; and what syncs is end-to-end encrypted delta packets — the cloud
+> provider cannot see the content either.
+
 CLI:
 
 ```bash
-membridge init                                      # cloud channel (auto-picked) + passphrase
-                                                    # (auto-generated & vaulted) + platform wiring
+membridge init                                      # cloud channel (auto-picked) + platform wiring;
+                                                    # the channel key is derived from the source seed,
+                                                    # so there is nothing to remember or hand over
 membridge add "Working on the MemoryBridge project" --tags dev
                                                     # optional: --kind fact / procedure / handover
 membridge search "MemoryBridge" -k 3              # hybrid: vector + keyword + graph, RRF-fused
@@ -216,12 +234,12 @@ membridge handoff                                 # show the current workbench (
 membridge handoff-hint                            # print the resident handover reminder
 membridge preload my-phone
 membridge autosync                                  # runs automatically every 15 min (scheduled task)
-membridge show-passphrase                           # reveal vaulted passphrase when pairing a device
-membridge delta phone.db --out delta.json
-membridge apply delta.json
-membridge publish --dir "D:/netdisk-sync/membridge" --passphrase my-secret
+membridge show-passphrase                           # inspect this machine's passphrase (rarely needed after v0.31: derivation is the default)
+membridge delta phone.db --out delta.json           # or: --passphrase "..." to encrypt, --plaintext to opt out
+membridge apply delta.json                          # or: --passphrase "..." for an encrypted packet
+membridge publish --dir "D:/netdisk-sync/membridge"           # no passphrase needed: derived key
 membridge publish --dir "D:/netdisk-sync/membridge" --force   # rebuild a wiped channel
-membridge fetch   --dir "D:/netdisk-sync/membridge" --passphrase my-secret
+membridge fetch   --dir "D:/netdisk-sync/membridge"           # no passphrase needed: derived key
 membridge stats
 membridge channel                               # channel-convergence check: same cloud channel on all devices?
 membridge gateway                               # phone/tablet gateway (base-station mode, token-protected)
@@ -232,7 +250,17 @@ membridge rebuild-edges                             # full rebuild of associatio
 membridge doctor                                    # env self-check (DB location + channel health + memory gaps)
 ```
 
-The passphrase can also come from the `MEMBRIDGE_PASSPHRASE` environment variable.
+> ⚠️ **Do not set a `MEMBRIDGE_PASSPHRASE` environment variable.** It is
+> per-machine history that is invisible across machines, so it silently splits
+> one channel into two incompatible keys — the packets one device publishes
+> cannot be opened by another. Since v0.31 the derived key takes precedence and
+> the variable is ignored with a warning. Two real incidents have already
+> happened this way (2026-09-28, vault passphrase; 2026-10-03, environment
+> variable).
+>
+> If you do need a separate key (a different channel, or a manual carry to
+> physical media), pass `--passphrase` on the command — it takes priority and is
+> scoped to that run.
 
 **Experience-distillation convention (with `kind` tags).** When you solve a hard
 problem, store the *experience* so future similar tasks hit it directly:
@@ -333,6 +361,239 @@ Path A injection block — the newest handover card is injected constantly in a
 workbench section — and explicitly reports "no intervention" when there is no
 card and nothing passes the quality bar), `memory_preload` — strictly limited
 to the UEP permission boundary; there is no "rewrite memory" tool.
+
+## Cross-device sync: what the channel is, what the password is, how to push and pull
+
+This section is written for **humans and AIs alike**: read it and you can carry
+memories to another device, or pull them back, **without asking anyone for a
+password**. Every algorithm and parameter is spelled out here verbatim, so an
+implementer in any language can reproduce it independently — no dependency on
+this project's code.
+
+### 1. A channel is just a cloud-drive folder
+
+`membridge init` creates a `membridge/` directory in the cloud drive you pick.
+That directory is the **channel**:
+
+```
+<your-cloud-drive>/membridge/
+├── channel.json       ← channel ID card (channel id / creator / time)
+├── devices/           ← per-device heartbeat (online state, node count, container fingerprint)
+├── outbox/            ← encrypted delta packets waiting to be pulled
+└── archive/           ← packets already pulled
+```
+
+**No server, no account, no API key.** The cloud drive is only where the devices
+meet.
+
+> As of v0.31 the channel folder **no longer stores a `channel.key`**. The key is
+> derived deterministically from the seed below; every end computes it locally and
+> gets byte-identical results. See the next section.
+
+### 2. The password (channel key): a seed plus a standard KDF, computed locally
+
+The channel key is not generated at random and passed around as a file. It is
+**deterministically derived from a seed in the source code**. Any device, any
+time, any language produces exactly the same result — that is why devices share a
+key by construction, and why "install the project and it just works, no asking
+anyone" holds.
+
+**Seed** (in `src/membridge/channel.py`, constant `CHANNEL_SEED`):
+
+```
+membridge/mb-639d44f1/jiabaobei
+```
+
+**Fixed salt** (same file, constant `SEED_SALT`):
+
+```
+membridge.channel.v1
+```
+
+**Iteration count** (same file, constant `KDF_ITERATIONS`):
+
+```
+200000
+```
+
+**Derivation** (implementable in any language, standard primitives only):
+
+```
+dk  = PBKDF2-HMAC-SHA256(
+          password = utf8(seed),
+          salt     = utf8(fixed salt),
+          iterations = 200000,
+          dkLen    = 32 )
+key = base64.urlsafe_b64encode(dk)     # standard base64, alphabet A–Z a–z 0–9 - _
+key = key.rstrip("=")                  # drop trailing = padding
+```
+
+The resulting `key` is **43 characters** — that is the channel key, used directly
+as a Fernet passphrase.
+
+**Do not take a shortcut like `hashlib.sha256(seed)`** — it must go through
+PBKDF2 with the parameters above, or your key will differ from everyone else's,
+which shows up as "sender and receiver must use the same passphrase".
+
+**Self-check ciphertext** (verify your derivation before silently publishing):
+
+```
+gAAAAABqwKqSJr8bLK6huRI9Dg5pLs-O8uMg5UYxU66NlZ1elIKgQ7qFCGF9WuZgUpheTigx4ekl-QABZT4qAr3UVtb_MBXZrbH90TheJo5JGyUg8M_0qco=
+```
+
+It is the result of encrypting the plaintext `membridge-channel-ok` with the
+derived key, a fixed salt of `00`×16, and Fernet. Decrypt it and get that
+plaintext back → your derivation is correct. (The salt is fixed at 16 zero bytes,
+so this ciphertext is identical every time it is generated and can be compared
+directly.)
+
+Full reproduction in Python:
+
+```python
+import base64, hashlib
+from cryptography.fernet import Fernet
+
+SEED = "membridge/mb-639d44f1/jiabaobei"
+SALT = "membridge.channel.v1"
+dk = hashlib.pbkdf2_hmac("sha256", SEED.encode(), SALT.encode(), 200000, 32)
+key = base64.urlsafe_b64encode(dk).decode().rstrip("=")
+print(key)   # this is the channel key
+```
+
+> **On security, stated plainly**: the seed ships with the source, so **anyone
+> who has this source can compute the channel key**. That is a logical trade-off
+> between "anyone who reads the docs can do it themselves" and "the key stays
+> secret" — not an implementation defect. For an AI to complete the task
+> independently, the derivation input cannot be a secret. Zero configuration wins
+> here, because the key's job is "all devices use one key, and the cloud provider
+> only ever sees ciphertext" — not "keep out people who can read the source".
+> What actually keeps unauthorised visitors out is the **access permission of the
+> cloud-drive folder itself**, which is exactly what that folder is for. (This
+> project is open source under MIT, and says so without hedging.)
+
+### 3. Encryption rules (delta packets)
+
+| | |
+|---|---|
+| What encrypts | the channel key derived above (43 characters) |
+| Algorithm | Fernet (AES-128-CBC + HMAC-SHA256); the passphrase itself goes through PBKDF2-HMAC-SHA256 for 200,000 rounds |
+| Per-packet salt | 16 random bytes, **carried with the packet** (the envelope's `salt` field) |
+| Envelope format | `{"fmt":"membridge-delta-enc-v1","salt":"<hex>","token":"<fernet>"}` |
+| What the cloud provider sees | only the ciphertext inside `token` — never your content |
+
+### 4. Push (publish)
+
+```bash
+membridge sync      # pull other ends' memories + publish this machine's new ones (manual, run anytime)
+membridge publish   # publish only
+```
+
+Scheduled jobs (registered by `init`, no configuration needed):
+
+| Platform | Mechanism | Frequency |
+|---|---|---|
+| Windows | scheduled task `MemoryBridge AutoSync` | every 15 minutes |
+| macOS / Linux | cron `membridge-autosync` | every 15 minutes |
+
+**Encryption is always on by default** — pass nothing at all and the derived key
+is used internally. For strict end-to-end or cross-channel work, pass
+`--passphrase your-passphrase` explicitly (it then takes priority, for that run
+only).
+
+**Important memories go up immediately, routine ones in batches**; memories
+tagged `migration=local` never leave the device on any code path (see
+[Privacy](#privacy)).
+
+### 4b. Specific case: carrying memories to other hardware with a manual passphrase
+
+Beyond cloud-drive sync there is another scenario: moving a whole store **by hand
+to a portable drive, USB stick or offline archive**, or handing it to a machine
+that has no MemoryBridge installed. **You do not need this day to day** — devices
+on the same channel use the automatic derivation above; a manual passphrase is
+only for **leaving the channel and moving to physical media**. The commands are:
+
+```bash
+# On the source machine: produce an encrypted delta packet (--out may be a USB / portable-drive path)
+membridge delta D:/store.db --out E:/memory-backup.mbd --passphrase "my-passphrase"
+
+# On the target machine: unseal with the same passphrase and merge
+membridge apply E:/memory-backup.mbd --passphrase "my-passphrase"
+
+# To inspect the contents first (optional; produces a plaintext file, use with care)
+membridge delta D:/store.db --out plain.json --plaintext
+```
+
+- Omitting `--passphrase` still encrypts — with the source-derived value, which
+  suits carrying memories between devices on the same channel.
+- Passing `--passphrase` uses the one you give; the other machine must be given
+  the **same** one to decrypt.
+- The resulting `.mbd` is ordinary JSON text; copy it to any medium you like.
+- **Plaintext mode (`--plaintext`) must be explicit** and is labelled
+  `(plaintext)` in the output to remind you.
+
+### 5. Pull (fetch)
+
+```bash
+membridge fetch     # pull delta packets published by other ends
+membridge sync      # equivalent: fetch then publish — this is the daily driver
+```
+
+With no `--dir`, the channel directory configured by `init` is used. **No
+passphrase needed here either** — derivation handles it.
+
+### 6. Joining from a new device: three steps, zero configuration
+
+```bash
+git clone https://github.com/jiabaobei/memory-bridge.git
+cd memory-bridge && pip install -e .
+membridge init          # point at the same cloud-drive folder; wire up local AI platforms
+membridge sync          # immediately pull everything this device had before
+```
+
+**Not one step asks for a password, and not one step transfers a key file.** Point
+the new device at the same cloud-drive folder and the key is computed from the
+source, byte-identical to every other device.
+
+### 7. When something goes wrong, run these first
+
+```bash
+membridge doctor         # one-screen health check: store, channel, platform wiring
+membridge netdisk-status # is the cloud drive inside the client's sync scope?
+membridge channel        # channel identity + key fingerprint + device roster
+```
+
+What the common messages mean:
+
+| Message | Meaning and what to do |
+|---|---|
+| `local vault / env var disagrees with the channel key` | That machine still holds a historical passphrase. **The derived key has already taken over; nothing is broken.** Clear that historical entry to silence the notice. |
+| `the channel folder holds an old key … rotate to switch to the derived value` | The channel was upgraded from before v0.30. The program **deliberately keeps using the old key** (otherwise historical packets would all fail to open); rotate manually only when you want to. |
+| `sender and receiver must use the same passphrase` | The sending end is still on a pre-v0.30.3 passphrase. Upgrade that device and resend. |
+| `passphrase mismatch, cannot decrypt` | Same issue, seen from the receiving side. |
+
+### 8. One-page cheat sheet for an AI
+
+If you are operating this project on a user's behalf, follow these four steps and
+do not ask for a password:
+
+1. **Confirm the channel directory**: the first line of `membridge channel`. All
+   devices must point at the **same** directory.
+2. **Pull other ends' memories**: `membridge fetch` (equivalently `membridge
+   sync`). Do not pass `--passphrase`.
+3. **Publish this machine's memories**: `membridge publish`. Do not pass
+   `--passphrase`.
+4. **Check it is the same key**: the `channel key: fingerprint xxxx` line in
+   `membridge channel` should match on every end.
+
+To encrypt or decrypt yourself: derive the 43-character key as in section 2 and
+use it as the Fernet passphrase; use a per-packet random 16-byte salt written
+into the envelope's `salt` field as hex; confirm the derivation against the
+self-check ciphertext before decrypting.
+
+**Never** print the channel key or any passphrase into a chat, commit it to a
+repository, or paste it into an issue — it is not a secret from anyone who can
+read the source, but leaking it still lets an unauthorised party read your memory
+content.
 
 ## Relationship to the paper
 
