@@ -389,7 +389,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
 def cmd_fetch(args: argparse.Namespace) -> int:
     store = _open_store(args)
     tr = transport.FolderTransport(args.dir, store)
-    result = tr.fetch(passphrase=_resolve_passphrase(args, args.dir, create=False))
+    result = tr.fetch(passphrase=getattr(args, "passphrase", None))
     for fn, src, r in result["applied"]:
         if r.get("rejected"):
             print(f"已拒绝来自 {src} 的差分包 {fn}：嵌入器不一致"
@@ -436,8 +436,9 @@ def _package_sync(args: argparse.Namespace) -> int:
     store = _open_store(args)
     passphrase = _resolve_passphrase(args, args.dir)
     tr = transport.FolderTransport(args.dir, store)
-    # 取回侧不新建密钥：老式口令通道升级后行为必须保持原样
-    result = tr.fetch(passphrase=_resolve_passphrase(args, args.dir, create=False))
+    # 取回侧不传口令：由库层按「派生值 → 通道目录旧钥匙」候选序列自行解析
+    # （v0.31.1：显式 --passphrase 仍是严格单钥，只在用户真的传了时才生效）
+    result = tr.fetch(passphrase=getattr(args, "passphrase", None))
     got = sum(r.get("nodes_added", 0) for _, _, r in result["applied"] if not r.get("rejected"))
     rejected = sum(1 for _, _, r in result["applied"] if r.get("rejected"))
     try:
@@ -790,8 +791,10 @@ def cmd_channel(args: argparse.Namespace) -> int:
           f"——由源码种子确定性派生，各端零输入零复述；要严格端到端时另设 --passphrase")
     if _mismatch:
         print(f"  ⚠️ 通道目录里存着旧密钥（指纹 "
-              f"{channel.key_fingerprint(_mismatch)}），与派生值不一致。已按旧密钥继续"
-              f"（否则历史包会集体解不开）。要改用派生值需轮换通道密钥。")
+              f"{channel.key_fingerprint(_mismatch)}），与派生值不一致。"
+              f"已按**派生值**继续（v0.31.1 起派生值是唯一真理）；"
+              f"旧文件只在解旧包时作为备用尝试，不会再盖过派生密钥。"
+              f"确认通道内已无旧版客户端后，可把 channel.key 移出通道目录。")
     roster = channel.roster(netdisk)
     if roster:
         print(f"通道内设备（心跳 {len(roster)} 台）：")

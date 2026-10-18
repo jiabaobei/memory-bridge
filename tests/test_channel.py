@@ -210,20 +210,50 @@ def test_derive_key_changes_with_seed():
     assert channel.derive_key(salt="另一个盐") != base
 
 
-def test_old_channel_key_file_still_wins_and_reports_mismatch():
-    """旧通道（目录里已有 channel.key）必须继续用它，且明确报告与派生值不一致。
+def test_stale_channel_key_file_never_overrides_derived():
+    """v0.31.1：通道目录里的 channel.key 不得盖过派生值（真机事故回归）。
 
-    不自动换钥匙：那样会让历史包集体解不开，把「口令不匹配」变得更难懂。
-    只报告，让人决定何时轮换。
+    2026-10-12 真机事故：轮换后一台未升级的 v0.30.x 设备发现 channel.key
+    不在，重新随机生成一把写回共享通道目录，v0.31 的「优先级 1：有文件就用」
+    于是把全通道切到那把钥匙上——而没有任何包是用它封的，33 个包集体
+    「口令不匹配」，同步停摆 6 天。派生值是唯一真理，文件只能是备用。
     """
     root = tempfile.mkdtemp(prefix="membridge-netdisk-")
-    legacy = "Rng4rNLMk-ZnsywbGzPfyrX1kGaI92DCW0x8N-QKzr8"
-    Path(root, channel.KEY_FILE).write_text(legacy, encoding="utf-8")
-    assert channel.ensure_key(root) == legacy, "旧通道必须用旧密钥"
-    assert channel.key_source_mismatch(root) == legacy, "且必须报告不一致"
-    # 新鲜通道无此文件 → 不报告
+    stale = "Rng4rNLMk-ZnsywbGzPfyrX1kGaI92DCW0x8N-QKzr8"
+    Path(root, channel.KEY_FILE).write_text(stale, encoding="utf-8")
+
+    assert channel.ensure_key(root) == channel.derive_key(), "文件不得盖过派生值"
+    assert channel.key_source_mismatch(root) == stale, "仍需报告不一致"
+    # 但解旧包时旧钥匙必须仍被尝试，否则轮换前的包永久解不开
+    assert channel.candidate_keys(root)[0] == channel.derive_key(), "派生值必须排第一"
+    assert stale in channel.candidate_keys(root), "旧钥匙必须保留为备用"
+
     fresh = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    assert channel.candidate_keys(fresh) == [channel.derive_key()], "无旧文件时只有派生值"
     assert channel.key_source_mismatch(fresh) is None
+
+
+def test_fetch_still_reads_packages_sealed_with_stale_key():
+    """端到端：旧钥匙封的包，在新代码下仍能被 fetch 解开（不能靠删包解决）。"""
+
+    from cryptography.fernet import Fernet  # noqa: F401  仅确认加密依赖在
+    root = tempfile.mkdtemp(prefix="membridge-netdisk-")
+    stale = "Rng4rNLMk-ZnsywbGzPfyrX1kGaI92DCW0x8N-QKzr8"
+    Path(root, channel.KEY_FILE).write_text(stale, encoding="utf-8")
+
+    # 发送端用旧钥匙发一个包（模拟未升级的 v0.30.x 设备）
+    sender = _store(DEV1)
+    _remember(sender, COFFEE)
+    FolderTransport(root, sender).publish(passphrase=stale)
+    sender.close()
+
+    # 接收端不传口令 → 应先试派生值失败，再回落旧钥匙成功
+    receiver = _store(DEV2)
+    result = FolderTransport(root, receiver).fetch()
+    assert not result["skipped"], f"旧钥匙封的包不该被跳过：{result['skipped']}"
+    assert result["applied"], "应成功并入旧钥匙封的包"
+    assert any(COFFEE in n.content for n in receiver.all_nodes()), "内容应落到接收端"
+    receiver.close()
 
 
 def test_heartbeat_registers_device_without_publishing():
@@ -302,7 +332,7 @@ def test_channel_cli_shows_fingerprint_never_secret():
 
 
 def test_channel_cli_warns_on_legacy_key_mismatch():
-    """通道目录里存着旧密钥时，体检必须明确告警——不静默、不自动换钥匙。"""
+    """通道目录里存着旧密钥时，体检必须明确告警——不静默，且说明派生值仍生效。"""
     root = tempfile.mkdtemp(prefix="membridge-netdisk-")
     a = _store(DEV1)
     _remember(a, COFFEE)
@@ -314,7 +344,10 @@ def test_channel_cli_warns_on_legacy_key_mismatch():
     with contextlib.redirect_stdout(buf):
         cli.cmd_channel(type("A", (), {"db": a._tmp.name + "/mem.db", "device": None})())
     out = buf.getvalue()
-    assert "旧密钥" in out and "轮换" in out, out
+    # v0.31.1：告警要同时说清「旧密钥存在」与「派生值仍生效、文件不覆盖」
+    assert "旧密钥" in out, out
+    assert "派生值" in out, out
+    assert "不会再盖过" in out, out
 
 
 def test_show_passphrase_masked_by_default():

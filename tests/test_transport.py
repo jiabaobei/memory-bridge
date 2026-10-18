@@ -311,7 +311,12 @@ def test_fetch_oserror_goes_to_errors_and_retries():
 
 
 def test_fetch_wrong_passphrase_message_is_actionable():
-    """口令错误时，提示必须区分于「未提供」，并给出 show-passphrase 指引。"""
+    """口令错误时，提示必须区分于「未提供」，并给出可执行的做法。
+
+    v0.31.1：不再指向 `show-passphrase`。它展示的是保险库口令，与通道密钥
+    无关——2026-10-12 那次事故里正是这条指引把人引到死胡同（查了也查不出根因）。
+    现在指向真正的解法：派生密钥（默认）+ 让发布端不传 --passphrase 重发。
+    """
     if not HAS_CRYPTO:
         print("\nSKIP: 未安装 cryptography")
         return
@@ -325,7 +330,8 @@ def test_fetch_wrong_passphrase_message_is_actionable():
     assert result["applied"] == []
     reason = result["skipped"][0][1]
     assert "口令不匹配" in reason, reason
-    assert "show-passphrase" in reason, reason
+    assert "同一口令" in reason, reason
+    assert "--passphrase" in reason, reason
     a.close()
     b.close()
 

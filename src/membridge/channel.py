@@ -213,30 +213,40 @@ def key_path(root: str) -> str:
 
 
 def ensure_key(root: str, create: bool = True) -> Optional[str]:
-    """通道密钥：从源码种子确定性派生（v0.31），通道目录里的文件只当旧缓存。
+    """通道密钥：恒为源码种子派生值（v0.31.1）。
 
-    v0.31 之前密钥是 `os.urandom(32)` 随机生成、只存在于通道文件夹，于是
-    「密钥的源头」变成了一个必须先同步过来的文件——新设备装完项目读了文档仍
-    未必有它，而「谁有那把钥匙」本身成了要向人解释的事。改为从源码种子派生后，
-    各端各自算、结果逐字节相同，跨设备天然同钥，且**不需要任何输入**。
+    v0.31 已把密钥源头改成派生，却保留了「通道目录里有 channel.key 就用它」
+    的优先级 1。那个后向兼容正是复发的入口：网盘通道是**多端共享的可写目录**，
+    任何一台还跑着 v0.30.x 的设备发现 channel.key 不在，就会重新随机生成一把
+    写回去（实测 2026-10-12 22:31 就这样产出了第三把钥匙），于是全通道被一把
+    **没有任何包用过**的钥匙劫持，33 个包集体「口令不匹配」。
 
-    优先级：
-      1. 通道目录里的 channel.key —— 旧通道的密钥，可能与派生值不同。
-         读到就用它，并记下不一致（见 key_source_mismatch），因为让旧通道
-         悄悄换钥匙只会把「口令不匹配」变得更难懂。
-      2. 源码种子派生 —— 默认路径。create=False 时也可用：它不写任何文件，
-         是纯函数，所以取回侧同样能算。
+    派生的全部意义是「各端各算、逐字节相同、不需要传文件」；只要还允许共享
+    目录里的一个可变文件盖过它，这个意义就不成立。故 v0.31.1 定死：
+    **派生值是唯一真理**。旧文件只作解历史包的备用钥匙，见 candidate_keys()。
+
+    create 参数保留仅为兼容既有调用；派生是纯计算、不落盘，无需创建。
     """
-    final = key_path(root)
-    try:
-        with open(final, "r", encoding="utf-8") as f:
-            key = f.read().strip()
-        if key:
-            return key
-    except OSError:
-        pass
-    # 通道目录没有密钥文件 → 从种子派生（纯计算，不落盘）
     return derive_key()
+
+
+def candidate_keys(root: str) -> List[str]:
+    """解包时依次尝试的密钥：派生值恒排第一，其后是通道目录里残留的旧钥匙。
+
+    旧钥匙只用于解开「轮换前 / 尚未升级的客户端」封的包——它们确实还在用旧
+    钥匙发，能解开比让整条通道卡住有用。**旧钥匙永不用于发包。**
+    返回去重列表；通道目录读不到或没有旧文件时，就是 [派生值] 单元素列表。
+    """
+    keys = [derive_key()]
+    for fn in (KEY_FILE, KEY_FILE + ".legacy"):
+        try:
+            with open(os.path.join(root, fn), "r", encoding="utf-8") as f:
+                k = f.read().strip()
+        except OSError:
+            continue
+        if k and k not in keys:
+            keys.append(k)
+    return keys
 
 
 def key_source_mismatch(root: str) -> Optional[str]:

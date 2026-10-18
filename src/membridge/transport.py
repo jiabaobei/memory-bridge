@@ -220,23 +220,23 @@ class FolderTransport:
                     env = json.loads(raw)
                     if env.get("fmt") != ENVELOPE_FMT:
                         raise ValueError("未知信封格式")
-                    # v0.31：没显式给口令就用源码种子派生。原先只在 CLI 层
-                    # (_resolve_passphrase) 做派生，库层直连（自建 agent、脚本、
-                    # 任何绕过 CLI 的调用）拿到 None 就报「需要口令」——派生只做在
-                    # 一层，等于承诺「装了项目就通」在最常见的调用路径上并不成立。
-                    key = passphrase or channel.derive_key()
-                    cryptor = PassphraseCryptor(
-                        key, salt=bytes.fromhex(env["salt"])
-                    )
-                    try:
-                        payload = cryptor.decrypt(env["token"])
-                    except Exception:
+                    # v0.31.1：显式口令 = 严格单钥（用户当次意图）；未给口令时按
+                    # 「派生值 → 通道目录旧钥匙」依次试。旧版客户端仍在用旧钥匙发包，
+                    # 让它们的包能解开，比让整条通道卡在「口令不匹配」有用。
+                    salt = bytes.fromhex(env["salt"])
+                    keys = [passphrase] if passphrase else channel.candidate_keys(self.root)
+                    for _k in keys:
+                        try:
+                            payload = PassphraseCryptor(_k, salt=salt).decrypt(env["token"])
+                            break
+                        except Exception:
+                            continue
+                    else:
                         # Fernet 抛 InvalidToken，对用户毫无信息量；换成可操作的提示
                         raise ValueError(
-                            f"口令不匹配，无法解密 {fn}：发布端与接收端必须使用同一口令，"
-                            "可用 membridge show-passphrase 查看本机口令。"
-                            "常见根因：发布端用了旧版自设口令或保险库旧口令——"
-                            "让发布端改用通道密钥（默认，不传 --passphrase）重发即可"
+                            f"口令不匹配，无法解密 {fn}：已依次尝试派生密钥与通道目录"
+                            "残留的旧钥匙均失败。发布端与接收端必须使用同一口令——"
+                            "多半是发布端用了自设口令，让它不传 --passphrase 重发即可"
                         ) from None
                 else:
                     payload = raw
