@@ -36,7 +36,7 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 
 | Capability | Status |
 |---|---|
-| **Zero-config cross-device sync (the password is written into the project docs, in encrypted form)** — the channel key is **deterministically derived from a source-code seed** (PBKDF2-HMAC-SHA256, 200,000 rounds, stdlib only), so every end computes it locally and gets **byte-identical** results; the channel folder no longer holds a plaintext key file. The README publishes the algorithm / salt / round count / self-check ciphertext verbatim, so **any AI or language can derive the key and open packets without installing this project**. Local historical passphrases (env var / vault) no longer shadow it; legacy channels keep their old key and warn explicitly | ✅ v0.31 |
+| **Zero-config cross-device sync (the password is written into the project docs, in encrypted form)** — the channel key is **deterministically derived from a source-code seed** (PBKDF2-HMAC-SHA256, 200,000 rounds, stdlib only), so every end computes it locally and gets **byte-identical** results; the channel folder no longer holds a plaintext key file. The README publishes the algorithm / salt / round count / self-check ciphertext verbatim, so **any AI or language can derive the key and open packets without installing this project**. Local historical passphrases (env var / vault) no longer shadow it, and **as of v0.31.1 a leftover `channel.key` in the channel folder no longer shadows it either** — the derived value is the single source of truth, and an old key is only a fallback for opening packets sealed by not-yet-upgraded devices | ✅ v0.31 / v0.31.1 |
 | **Time-window retrieval (Hindsight borrowing — structure layer only)** — `scope` gains `at:`: relative `at:7d` / `at:12h` / `at:30m` / `at:2w`, month `at:2026-09`, day `at:2026-09-20`, range `at:2026-09-01..2026-09-20` (either side omittable, **right end includes that whole day**). Mirrors Hindsight's 4th recall route (temporal), filtering before fusion; pure stdlib, invalid syntax = no filter, `tag:` / `scene:` / `kind:` behaviour byte-identical | ✅ v0.30 |
 | **Evidence count (proof count, Hindsight borrowing)** — counts how many **distinct** memories reference a node (in+out edges deduped): `search` appends a read-only `· referenced by N memories` suffix and the count acts as the **RRF tie-breaker**. Deliberately **absent from the injected context block** (every character there is a recurring token cost). Edge relations stored since v0.14 become visible outside the store for the first time | ✅ v0.30 |
 | **Container consistency (declarable, reconcilable schema across ends)** — a container manifest (`schema.py`) reads the local store and emits a device identity card (schema version / node+edge fields / kind enum / storage planes / migration registry); `membridge schema` shows the local card, `--peer` reconciles against any remote card in both directions, auto-ALTERs missing columns via the migration registry; deltas now carry an `edges_v2` 5-tuple (src, dst, weight, kind, evidence) reconciled before apply — **v0.14's typed edges no longer degrade across devices** | ✅ v0.16 |
@@ -389,6 +389,15 @@ meet.
 > As of v0.31 the channel folder **no longer stores a `channel.key`**. The key is
 > derived deterministically from the seed below; every end computes it locally and
 > gets byte-identical results. See the next section.
+>
+> **As of v0.31.1, even if a stray `channel.key` is still present in the channel
+> folder (written back by a not-yet-upgraded device, for instance), it no longer
+> takes effect** — the derived value is always the single source of truth. An old
+> key is only tried as a fallback when fetching, to open packets sealed by old
+> devices; **it is never used to publish**.
+> (Why this matters: an earlier release let the file win, to avoid breaking
+> historical packets. One stale client then wrote a fresh random key back, hijacked
+> the whole channel, and 33 packets became unreadable — sync was down for 6 days.)
 
 ### 2. The password (channel key): a seed plus a standard KDF, computed locally
 
@@ -567,9 +576,9 @@ What the common messages mean:
 | Message | Meaning and what to do |
 |---|---|
 | `local vault / env var disagrees with the channel key` | That machine still holds a historical passphrase. **The derived key has already taken over; nothing is broken.** Clear that historical entry to silence the notice. |
-| `the channel folder holds an old key … rotate to switch to the derived value` | The channel was upgraded from before v0.30. The program **deliberately keeps using the old key** (otherwise historical packets would all fail to open); rotate manually only when you want to. |
+| `the channel folder holds an old key … which disagrees with the derived value` | An old key from before the upgrade is lying around (or was written back by a not-yet-upgraded device). **As of v0.31.1 the derived value has taken over and the file no longer takes effect, so sync is unaffected**; it is only tried as a fallback when fetching. Once no legacy client remains on the channel, move `channel.key` out of the channel folder. |
 | `sender and receiver must use the same passphrase` | The sending end is still on a pre-v0.30.3 passphrase. Upgrade that device and resend. |
-| `passphrase mismatch, cannot decrypt` | Same issue, seen from the receiving side. |
+| `passphrase mismatch, cannot decrypt` | Same issue, seen from the receiving side. The program already tries the derived value and any leftover old keys in turn; this error only appears when all of them fail, which usually means the sender used a passphrase of their own. |
 
 ### 8. One-page cheat sheet for an AI
 
