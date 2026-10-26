@@ -47,6 +47,12 @@ membridge search "<关键词>" -k 5
 # 取出可直接注入 prompt 的记忆上下文块
 membridge context "<主题>" -k 5
 
+# 自动注入：把记忆送进每个新会话的上下文（不再靠 agent 自己想起去查）
+membridge hook --warm        # 闲时/开机预热候选池+工作台（唯一碰库的一步）
+membridge hook --install     # 接线本机检测到的宿主（只增自己那条，不动别人的钩子）
+membridge hook --status      # 看各宿主是否已接、缓存多新鲜
+membridge hook               # 钩子模式：宿主调用它，读缓存+按任务过滤后输出
+
 # 记忆库统计（条数 / 标签 / 关联）
 membridge stats
 

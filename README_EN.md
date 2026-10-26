@@ -232,6 +232,9 @@ membridge context "continue this morning's discussion"
                                                     # turn" only when there is no card and no hit
 membridge handoff                                 # show the current workbench (latest handover card)
 membridge handoff-hint                            # print the resident handover reminder
+membridge hook --warm                                    # pre-warm the injection cache (idle/boot: one DB pass)
+membridge hook --install                                 # wire auto-injection into detected AI hosts (adds only its own entry)
+membridge hook --status                                  # show which hosts are wired and how fresh the cache is
 membridge preload my-phone
 membridge autosync                                  # runs automatically every 15 min (scheduled task)
 membridge show-passphrase                           # inspect this machine's passphrase (rarely needed after v0.31: derivation is the default)

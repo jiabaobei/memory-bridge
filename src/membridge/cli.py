@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import capabilities, dss, heat, injection, privacy, retrieval, transport
+from . import capabilities, dss, heat, hook, injection, privacy, retrieval, transport
 from .embeddings import HashingEmbedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
@@ -148,6 +148,47 @@ def cmd_handoff_hint(args: argparse.Namespace) -> int:  # noqa: ARG001
     print()
     print(handoff_hint())
     return 0
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    """钩子：闲时预热、对话时零阻塞读缓存（v0.32）。"""
+    if args.install or args.uninstall or args.status:
+        paths = hook.platform_paths(args.settings)
+        if not paths:
+            print("没探测到任何宿主配置——可用 --settings <配置路径> 指定")
+            return 2
+        if args.install:
+            ev = {"session": ("SessionStart",), "prompt": ("UserPromptSubmit",),
+                  "both": hook.EVENTS}[args.events]
+            lines = hook.install(paths, dry_run=args.dry_run, events=ev)
+        elif args.uninstall:
+            lines = hook.uninstall(paths)
+        else:
+            lines = hook.status(paths)
+        for line in lines:
+            print(line)
+        if args.install and not args.dry_run:
+            print("提示：重开一次会话生效；钩子只读记忆库，不写回。"
+                  "先跑一次 membridge hook --warm 把候选池算好。"
+                  "摘除用 membridge hook --uninstall")
+        return 0
+    if args.warm:
+        path = hook.warm(_open_store(args), budget=args.budget)
+        if not args.quiet:
+            print(f"✅ 预热完成：{path}（对话时只读它，毫秒级）")
+        return 0
+    try:
+        cache = hook.load_cache()
+        if hook.is_stale(cache):
+            hook.spawn_warm()           # 后台补，绝不阻塞这条消息
+            if not cache:
+                return 0
+        block = hook.render(cache, hook.stdin_query(), budget=args.budget, k=args.k)
+        return hook.emit(block, as_json=args.json, event=args.event)
+    except Exception:
+        if args.quiet:      # fail-open：钩子坏掉也不能拦住用户的任务
+            return 0
+        raise
 
 
 def cmd_preload(args: argparse.Namespace) -> int:
@@ -1162,6 +1203,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--scope", default="",
                    help="可选范围直达：同 search --scope")
     p.set_defaults(func=cmd_context)
+
+    p = sub.add_parser("hook", help="钩子：把注入块自动投递进 agent 上下文（v0.32）")
+    p.add_argument("--install", action="store_true", help="幂等写入各平台 hooks 配置")
+    p.add_argument("--uninstall", action="store_true", help="只摘除自己那条钩子")
+    p.add_argument("--status", action="store_true", help="查看各平台钩子安装状态")
+    p.add_argument("--settings", default=None,
+                   help="额外指定一个宿主配置路径（自定义宿主）")
+    p.add_argument("--dry-run", action="store_true", help="只报告将写入哪些文件")
+    p.add_argument("--events", default="both",
+                   choices=["session", "prompt", "both"],
+                   help="注入时机：session=每会话一次 / prompt=每条消息 / both（默认）")
+    p.add_argument("--warm", action="store_true",
+                   help="预热：把候选池+常驻块算好落盘（闲时/开机跑一次）")
+    p.add_argument("--json", action="store_true",
+                   help="输出 hookSpecificOutput.additionalContext 结构（只认 JSON 的宿主）")
+    p.add_argument("--event", default="SessionStart",
+                   choices=["SessionStart", "UserPromptSubmit"])
+    p.add_argument("--budget", type=int, default=hook.DEFAULT_BUDGET,
+                   help="注入预算（字符），默认 %d" % hook.DEFAULT_BUDGET)
+    p.add_argument("-k", type=int, default=hook.DEFAULT_K)
+    p.add_argument("--quiet", action="store_true",
+                   help="失败静默退出（钩子模式默认 fail-open，绝不拦用户任务）")
+    p.set_defaults(func=cmd_hook)
 
     p = sub.add_parser("preload", help="列出可预加载到目标设备的记忆")
     p.add_argument("target", help="目标设备名")
