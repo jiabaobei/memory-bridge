@@ -2,9 +2,17 @@
 
 import json
 
+import pytest
+
 from membridge import hook
 from membridge.node import MemoryNode
 from membridge.store import MemoryStore
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cache(tmp_path, monkeypatch):
+    """每个测试用独立缓存，绝不碰 ~/.membridge/inject-cache.json（v0.32.1 教训）。"""
+    monkeypatch.setenv("MEMBRIDGE_CACHE", str(tmp_path / "cache.json"))
 
 
 def _store(tmp_path):

@@ -27,6 +27,7 @@ ponytail: 缓存失效靠 TTL + 后台预热，没有跨进程锁——两个进
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -46,7 +47,11 @@ CONF_MIN = 0.3              # 与 injection.CONFIDENCE_THRESHOLD 同义
 # 与 injection.SILENCE_NOTE 同文案：热路径不导入该模块，省 0.4s 启动
 SILENCE = "（记忆桥：本轮没有需要干预的记忆——保持沉默，不注入上下文）"
 
-CACHE_PATH = Path.home() / ".membridge" / "inject-cache.json"
+def cache_path() -> Path:
+    """注入缓存位置。MEMBRIDGE_CACHE 可覆盖——测试与临时库必须用独立缓存，
+    否则 `--db 别的库 hook --warm` 会把主库的缓存冲掉（v0.32.1 真机踩到）。"""
+    return Path(os.environ.get("MEMBRIDGE_CACHE")
+                or Path.home() / ".membridge" / "inject-cache.json")
 
 
 # ------------------------------------------------------------------ 关键词
@@ -105,11 +110,12 @@ def warm(store, budget: int = DEFAULT_BUDGET, pool: int = POOL_MAX) -> Path:
             "c": round(float(n.confidence), 3),
         } for n in top],
     }
-    CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CACHE_PATH.with_suffix(".tmp")
+    target = cache_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(CACHE_PATH)
-    return CACHE_PATH
+    tmp.replace(target)
+    return target
 
 
 def is_stale(cache: Optional[dict]) -> bool:
@@ -119,7 +125,7 @@ def is_stale(cache: Optional[dict]) -> bool:
 
 def load_cache() -> Optional[dict]:
     try:
-        return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        return json.loads(cache_path().read_text(encoding="utf-8"))
     except Exception:
         return None
 
