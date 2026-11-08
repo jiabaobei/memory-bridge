@@ -32,10 +32,11 @@ And it is **cross-platform**: via MCP, one memory store is shared by Claude Code
 | Phones / tablets (gateway, "base-station" mode) | `membridge gateway`: browsers on iOS / Android / tablets (built-in pocket-note page, add-to-home-screen) and any HTTP client such as iOS Shortcuts; Android can also run a full node via Termux ([mobile guide](docs/mobile.md)) | ✅ v0.11 |
 | Browser extension | Doubao, Kimi, ChatGPT web, … | 📋 |
 
-## Status (v0.31)
+## Status (v0.33)
 
 | Capability | Status |
 |---|---|
+| **Session index + rule pinning + skip classification (v0.33)** — `session-ingest` scans session archives read-only and writes one **syncable index line per task** (date + title + artifact filenames + session id): zero LLM, no conversation body, content-deduplicated, PAMS still applies. It closes the last gap where a task was finished but never written to the store. Memories tagged `rule` / `lesson` / `勿再` are kept in the hook's candidate pool regardless of heat ranking and get priority when task keywords match. `sync` / `fetch` now split skips into **normal** (archived / self-published / duplicate) and **⚠️ abnormal** (passphrase or corrupt packet), so "fetched 0" is no longer misread as a broken sync | ✅ v0.33 |
 | **Automatic injection (v0.32)** | After `membridge hook --install`, a hook feeds the **matching** memories into the context at session start and/or on each message. `--warm` precomputes a heat-ranked candidate pool plus the handoff workbench into `~/.membridge/inject-cache.json` while the machine is idle, so conversation time only reads that cache — milliseconds, no DB open, no embedding pass. **No match means not a single byte is emitted** (silence contract), so irrelevant memories never burn tokens. It appends only its own hook entry (the command carries the `-m membridge hook` marker), leaves every other hook untouched, and backs up the host config before writing; `--uninstall` removes just its own. `--events session` pays the cost once per session, `--events prompt` once per message | ✅ v0.32 |
 | **Zero-config cross-device sync (the password is written into the project docs, in encrypted form)** — the channel key is **deterministically derived from a source-code seed** (PBKDF2-HMAC-SHA256, 200,000 rounds, stdlib only), so every end computes it locally and gets **byte-identical** results; the channel folder no longer holds a plaintext key file. The README publishes the algorithm / salt / round count / self-check ciphertext verbatim, so **any AI or language can derive the key and open packets without installing this project**. Local historical passphrases (env var / vault) no longer shadow it, and **as of v0.31.1 a leftover `channel.key` in the channel folder no longer shadows it either** — the derived value is the single source of truth, and an old key is only a fallback for opening packets sealed by not-yet-upgraded devices | ✅ v0.31 / v0.31.1 |
 | **Time-window retrieval (Hindsight borrowing — structure layer only)** — `scope` gains `at:`: relative `at:7d` / `at:12h` / `at:30m` / `at:2w`, month `at:2026-09`, day `at:2026-09-20`, range `at:2026-09-01..2026-09-20` (either side omittable, **right end includes that whole day**). Mirrors Hindsight's 4th recall route (temporal), filtering before fusion; pure stdlib, invalid syntax = no filter, `tag:` / `scene:` / `kind:` behaviour byte-identical | ✅ v0.30 |
@@ -607,6 +608,22 @@ self-check ciphertext before decrypting.
 repository, or paste it into an issue — it is not a secret from anyone who can
 read the source, but leaking it still lets an unauthorised party read your memory
 content.
+
+### 9. New in v0.33: find what was done on another machine
+
+```bash
+membridge session-ingest --dry-run --verbose   # scan session archives, no writes
+membridge session-ingest                       # write one index line per session
+membridge search "<artifact or task name>" --scope tag:session
+```
+
+When a user says "I did this on another computer", check in this order:
+① local session archives (`session-ingest --dry-run` or the task list),
+② `search --scope tag:session` / `tag:rule`, ③ cloud-drive connectors.
+**Zero hits in the memory store only proves nothing was written there — never
+that the work was never done** (real incident, 2026-11-08). Likewise, `sync`
+reporting `fetched 0, normal skips N` means there is nothing new to receive,
+not a broken channel.
 
 ## Relationship to the paper
 

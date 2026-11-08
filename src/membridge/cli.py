@@ -22,7 +22,8 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-from . import capabilities, dss, heat, hook, injection, privacy, retrieval, transport
+from . import (capabilities, dss, heat, hook, injection, privacy, retrieval,
+               session_ingest, transport)
 from .embeddings import HashingEmbedder, embedder_identity
 from .node import MemoryNode
 from .privacy import classify_scene, default_migration, preload_allowed
@@ -427,6 +428,24 @@ def cmd_publish(args: argparse.Namespace) -> int:
     return 0
 
 
+# 与 transport.py 三处 skipped.append 的字面保持一致（v0.33）
+_NORMAL_SKIP_PREFIXES = ("自己发布的包", "重复包", "已被上次 fetch 归档")
+
+
+def classify_skips(skipped) -> tuple:
+    """把「跳过 N 个」拆成正常 / 异常两类，纯展示层、不改同步行为。
+
+    真机事故（2026-11-08）：`sync` 报「取回 0 条、跳过 46 个」被误读成同步
+    故障，实际是 45 个已归档包 + 1 个本机自发包。一行汇总分不清这两类，
+    于是「没有新东西可收」看起来像「东西丢了」。
+    """
+    normal, abnormal = [], []
+    for item in skipped or []:
+        (normal if item[1].startswith(_NORMAL_SKIP_PREFIXES)
+         else abnormal).append(item)
+    return normal, abnormal
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     store = _open_store(args)
     tr = transport.FolderTransport(args.dir, store)
@@ -439,8 +458,11 @@ def cmd_fetch(args: argparse.Namespace) -> int:
             continue
         print(f"已并入来自 {src} 的差分包 {fn}："
               f"新增节点 {r['nodes_added']}，去重跳过 {r['nodes_skipped']}，应用边 {r['edges_applied']}")
-    for fn, reason in result["skipped"]:
-        print(f"跳过 {fn}：{reason}")
+    normal, abnormal = classify_skips(result["skipped"])
+    for fn, reason in abnormal:
+        print(f"⚠️ 跳过（异常）{fn}：{reason}")
+    if normal:
+        print(f"跳过 {len(normal)} 个（正常：已归档/自发/重复），无需处理。")
     for fn, reason in result.get("errors", []):
         print(f"环境错误 {fn}（包已保留，下次 fetch 自动重试）：{reason}")
     if not result["applied"] and not result["skipped"] and not result.get("errors"):
@@ -491,17 +513,27 @@ def _package_sync(args: argparse.Namespace) -> int:
     except (ValueError, ImportError) as exc:
         print(str(exc))
         return 2
+    normal, abnormal = classify_skips(result["skipped"])
+    skip_txt = ""
+    if normal:
+        skip_txt += f"，正常跳过 {len(normal)} 个（已归档/自发/重复）"
+    if abnormal:
+        skip_txt += f"，⚠️ 异常跳过 {len(abnormal)} 个（口令或包损坏）"
     print(
         f"sync：取回 {got} 条新记忆，发布 {'1 个差分包' if path else '无新内容'}"
         + (f"，拒绝 {rejected} 个嵌入器不一致的包" if rejected else "")
-        + (f"，跳过 {len(result['skipped'])} 个" if result["skipped"] else "")
+        + skip_txt
     )
-    # v0.29.1：致命跳过必须现形——此前「口令不匹配」等数据性失败被压进
-    # 跳过计数里，用户看到「跳过 22 个」无从分辨正常去重与共享断裂
-    # （真机事故 2026-09-28：531 条大包卡在通道里 8 天无人察觉）。
-    for fn, reason in result["skipped"]:
-        if not reason.startswith(("自己发布的包", "重复包")):
-            print(f"⚠️ 他端包未能取回 {fn}：{reason}")
+    # v0.29.1 逐包明细 + v0.33 汇总分类：异常项仍逐包现形，正常项不再
+    # 与「口令不匹配」混成一个数字（真机 2026-09-28：531 条大包卡 8 天）。
+    for fn, reason in abnormal:
+        print(f"⚠️ 他端包未能取回 {fn}：{reason}")
+    if abnormal:
+        print("提示：口令优先级 --passphrase > MEMBRIDGE_PASSPHRASE > 通道派生密钥；"
+              "发布端与接收端须用同一把钥匙。")
+    if got == 0 and normal and not abnormal:
+        print("说明：取回 0 条是通道里的包都已归档/自发/重复，不是同步故障；"
+              "要找「以前做过什么」，先跑 membridge session-ingest --dry-run。")
     for fn, reason in result.get("errors", []):
         print(f"⚠️ 环境错误 {fn}（包已保留，下次 sync 自动重试）：{reason}")
     if tr.channel_status == "mismatch":
@@ -1160,6 +1192,59 @@ def cmd_import_md(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_session_ingest(args: argparse.Namespace) -> int:
+    """v0.33 会话索引沉淀：只读扫归档，每个会话写一条一行式索引。
+
+    与 import-md 同一套写库约定：逐条按内容精确判重、隐私词照走 PAMS、
+    `--dry-run` 先看后写。只新增节点，不改写任何既有记忆。
+    """
+    root = (Path(args.projects_dir).expanduser() if args.projects_dir
+            else session_ingest.default_projects_dir())
+    entries = session_ingest.scan(root, since=args.since or "",
+                                  limit=args.limit, max_files=args.max_files)
+    if not entries:
+        print(f"没有可索引的会话：{root}"
+              "（确认 --projects-dir 是否指向会话归档目录）")
+        return 1
+    store = _open_store(args)
+    embedder = capabilities.best_embedder()
+    if not store._get_meta("embedder_id"):
+        store._set_meta("embedder_id",
+                        json.dumps(embedder_identity(embedder), ensure_ascii=False))
+    added = dup = 0
+    for entry in entries:
+        content = session_ingest.index_line(entry)
+        if store.conn.execute("SELECT 1 FROM nodes WHERE content = ?",
+                              (content,)).fetchone():
+            dup += 1
+            continue
+        if not args.dry_run:
+            node = MemoryNode(
+                content=content,
+                embedding=embedder.embed(content),
+                tags=[t.strip() for t in (args.tags or "").split(",") if t.strip()],
+                scene=args.scene or classify_scene(content),
+                device=args.device or store.device_name,
+                migration=args.migration or default_migration(content),
+                kind=(args.kind or "").strip(),
+            )
+            with store.transaction():
+                store.add(node)
+                build_edges(store, embedder, only_new=node)
+                build_entity_edges(store, node)
+        added += 1
+        if args.verbose:
+            print(f"  {'[dry] ' if args.dry_run else ''}{content}")
+    print(f"合计：{root} 扫到 {len(entries)} 个会话，"
+          f"{'拟写入' if args.dry_run else '已写入'} {added} 条索引，"
+          f"判重跳过 {dup} 条")
+    if added and not args.dry_run:
+        print('下一次 sync 会把可上云的索引传出；查历史先跑 '
+              'membridge search "<文件名或任务名>" --scope tag:session')
+    store.close()
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(
@@ -1439,6 +1524,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--min-len", type=int, default=8,
                    help="条目最短字符数，过滤碎屑行（默认 8）")
     p.set_defaults(func=cmd_import_md)
+
+    p = sub.add_parser("session-ingest",
+                       help="会话索引沉淀：只读扫描会话归档，每个任务写一条索引（零 LLM）")
+    p.add_argument("projects_dir", nargs="?", default=None,
+                   help="会话归档根目录（默认 ~/.workbuddy/projects）")
+    p.add_argument("--dry-run", action="store_true", help="只扫描与判重，不写库")
+    p.add_argument("--since", default="", help="只索引该日期起的会话（YYYY-MM-DD）")
+    p.add_argument("--limit", type=int, default=300,
+                   help="最多索引多少个会话（默认 300）")
+    p.add_argument("--max-files", type=int, default=6,
+                   help="每条索引最多列几个产出文件名（默认 6）")
+    p.add_argument("--tags", default="session,index", help="附加标签")
+    p.add_argument("--scene", default=None, help="场景域（默认自动分类）")
+    p.add_argument("--migration", default=None,
+                   help="迁移标签 local/edge/cloud（默认自动判定，隐私词照走 local）")
+    p.add_argument("--kind", default="", choices=["", "fact", "procedure", "handover"],
+                   help="可选标注（默认空 = 不标注）")
+    p.add_argument("--verbose", action="store_true", help="逐条打印索引")
+    p.set_defaults(func=cmd_session_ingest)
 
     args = parser.parse_args(argv)
     return args.func(args)

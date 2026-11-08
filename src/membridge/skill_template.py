@@ -61,11 +61,26 @@ membridge stats
 membridge import-md <文件或目录>          # 目录取 *.md 与 *.txt
 membridge import-md <路径> --dry-run      # 只解析与判重，不写库；先看再导
 membridge import-md <路径> --tags imported --min-len 8
+
+# 会话索引沉淀：把「以前做过什么任务、产出了哪些文件」变成可同步的一行索引
+# 只读扫描会话归档（默认 ~/.workbuddy/projects），不复制会话正文
+membridge session-ingest                       # 写入索引
+membridge session-ingest --dry-run --verbose   # 先看后写，逐条核对
+membridge session-ingest <归档目录> --since 2026-11-01
 ```
 
 要点：
 - `import-md` 是 autosync 缺的 Ingest 一环：自动同步只运「已在库里的」，**从不采集**。
   会话产出了值得长期记住的东西、而没走 `add` 时，用 `import-md` 把日志补进库。
+- `session-ingest` 补的是最后一米：会话做完了却没写库，换设备就查不到。每个会话
+  只存一行「日期 + 任务标题 + 产出文件名 + 会话 id」，**不存正文**、零 LLM、
+  逐条判重、只新增不改写既有记忆。
+- **遇到「以前做过 / 另一台电脑查过 / 翻出来」按序查三处**：① 本地会话归档
+  （`session-ingest --dry-run`，或直接看任务列表 / 归档标题）；
+  ② `membridge search "<文件名或任务名>" --scope tag:session`（索引）与
+  `--scope tag:rule`（铁律/教训）；③ 云盘连接器（WPS / 夸克等）。
+  **记忆库精确匹配 0 条只证明「没写进库」，不证明「没做过」**
+  （2026-11-08 真机事故：把「没入库」说成了「没有文件」）。
 - 隐私词照走 PAMS 自动判定（命中即 `local` 永不上云），与单条 `add` 同一套规则。
 - 逐条按内容精确判重：重复跑安全，不会产生重复记忆。
 
@@ -107,6 +122,11 @@ membridge preload <目标设备> -k 5
 # 自动同步：重要记忆立即上云、普通记忆批量上云 + 取回他端
 membridge autosync
 ```
+
+汇总行把跳过拆成「正常跳过 N 个（已归档/自发/重复）」与「⚠️ 异常跳过 N 个
+（口令或包损坏）」；**取回 0 条 + 只有正常跳过 = 没有新东西可收，不是同步故障**。
+铁律/教训类记忆（`rule`/`教训`/`勿再` 等标签）在 `membridge hook --warm`
+里保底进候选池，命中任务关键词时优先注入，不会被热度排序挤掉。
 
 ### 网盘三端直达（rclone / WebDAV）
 
@@ -162,5 +182,6 @@ membridge set-passphrase        # 手动设置 / 修改同步口令（通常无�
   （`membridge channel` 只给通道密钥指纹，`show-passphrase` 默认掩码）。
 - **体检优先**：说"记住了"之前可以先 `membridge search` 证实一次；说"同步好了"之前
   先 `membridge stats` 或 `membridge channel` 看事实。
-- 命令失败（如 membridge 未安装）时，告知用户运行 `pip install membridge` 并 `membridge init`。
+- 命令失败（如 membridge 未安装）时，在项目目录运行 `pip install -e .` 再
+  `membridge init`；**PyPI 上的同名包不是本项目**，不要引导去装它。
 """

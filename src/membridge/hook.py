@@ -79,6 +79,25 @@ def _score(entry: dict, q: set) -> int:
 
 MIN_SCORE = 2
 
+# v0.33 铁律 / 教训类记忆：确定性识别，不靠语义相似度。
+# 真机事故（2026-11-08）：11-03 入库的「检索历史素材的唯一正确路径」教训，
+# 语义检索相关度 0.02 被噪声淹没，agent 因此断言「没有文件」。
+# 这类记忆数量少、价值高，不该被热度排序或候选池上限挤掉。
+RULE_TAGS = frozenset({"rule", "规则", "教训", "勿再", "铁律", "lesson"})
+RULE_MARKERS = ("铁律", "教训", "勿再", "唯一正确路径", "禁止", "不得",
+                "硬规则", "必先")
+RULE_MAX = 8
+RULE_BONUS = 2
+
+
+def is_rule(node) -> bool:
+    """标签或正文前 40 字命中即规则类。纯字符串判定，零 LLM、零向量。"""
+    tags = {str(t).strip().lower() for t in (getattr(node, "tags", None) or [])}
+    if tags & {t.lower() for t in RULE_TAGS}:
+        return True
+    return any(m in (getattr(node, "content", "") or "")[:40]
+               for m in RULE_MARKERS)
+
 
 # ------------------------------------------------------------------ 预热
 
@@ -98,11 +117,20 @@ def warm(store, budget: int = DEFAULT_BUDGET, pool: int = POOL_MAX) -> Path:
         hot = sorted([n for n in store.all_nodes() if n.confidence >= CONF_MIN],
                      key=lambda n: n.confidence, reverse=True)[:pool]
     # 交接卡已在工作台小节恒定注入，不再重复进候选池
-    top = [n for n in hot if getattr(n, "kind", "") != "handover"][:pool]
+    hot = [n for n in hot if getattr(n, "kind", "") != "handover"]
+    # v0.33：规则类保底进池——不受热度排序、不被 POOL_MAX 截断。
+    # 只是「保底进池」，是否注入仍要过关键词门槛（沉默契约一字未改）。
+    try:
+        rules = [n for n in store.all_nodes() if is_rule(n)][:RULE_MAX]
+    except Exception:
+        rules = []
+    rule_ids = {n.node_id for n in rules}
+    top = (rules + [n for n in hot if n.node_id not in rule_ids])[:pool]
     payload = {
         "ts": time.time(),
         "budget": budget,
         "workbench": wb,
+        "rules": [n.node_id[:8] for n in rules],
         "entries": [{
             "id": n.node_id[:8],
             "t": n.content[:500],
@@ -153,7 +181,15 @@ def render(cache: dict, query: str, budget: int = DEFAULT_BUDGET,
     entries = cache.get("entries") or []
     hits: List[dict] = []
     if q:
-        scored = [(e, _score(e, q)) for e in entries]
+        rule_ids = set(cache.get("rules") or [])
+        scored = []
+        for e in entries:
+            s = _score(e, q)
+            # 只在「本来就有命中」时给规则类加权：不相关的规则不占 token，
+            # 沉默契约与省 token 原则都不破。
+            if s and e.get("id") in rule_ids:
+                s += RULE_BONUS
+            scored.append((e, s))
         hits = [e for e, s in sorted(scored, key=lambda x: (-x[1], -x[0].get("c", 0)))
                 if s >= MIN_SCORE][:k]
     wb = (cache.get("workbench") or "").strip()
