@@ -59,25 +59,82 @@ def cache_path() -> Path:
 _TOKEN_RE = re.compile(r"[\u4e00-\u9fa5]{2,}|[A-Za-z][A-Za-z0-9_.+-]{1,}")
 
 
-def tokens(text: str) -> set:
-    """任务 → 关键词集合。中文长串补 2 字滑动窗，够用且不依赖分词库。"""
-    out = set()
+def split_tokens(text: str):
+    """→ (整词, 滑窗碎片)。
+
+    整词 = 按标点/空格切出来的原串（长度≥2 的汉字串、或英文标识符）；
+    碎片 = 中文串的 2 字滑动窗，用来接住「帮我做周报」里的「周报」这种被整句
+    吞掉的实体词。两者必须分开算分——碎片在长文里很容易跨词巧合撞上
+    （真机：「周报规则」里的「报规」正好出现在另一条记忆里，把流水线顶了下去）。
+    """
+    words, frags = set(), set()
     for tok in _TOKEN_RE.findall(text or ""):
-        out.add(tok.lower())
-        if len(tok) >= 4 and re.match(r"[\u4e00-\u9fa5]", tok):
-            out.update(tok[i:i + 2].lower() for i in range(len(tok) - 1))
-    return out
+        words.add(tok.lower())
+        if len(tok) >= 3 and re.match(r"[\u4e00-\u9fa5]", tok):
+            frags.update(tok[i:i + 2].lower() for i in range(len(tok) - 1))
+    return words, frags
 
 
-def _score(entry: dict, q: set) -> int:
-    """匹配分：2 字词 1 分、3 字及以上 2 分。低于 2 分算噪音（如"今天/这个"）。"""
-    if not q:
+def tokens(text: str) -> set:
+    """整词 ∪ 碎片。保留旧接口给调用方/测试做包含判断。"""
+    words, frags = split_tokens(text)
+    return words | frags
+
+
+# 问法词 / 客套词 / 泛时间词：高频出现但不指向任何主题，命中它们不算相关。
+# 用「表」过滤而不是用「长度」过滤——「周报」「通报」「简历」「记忆桥」这些两字
+# 实体词恰恰是用户最常说的主题词，按长度一律降权就等于永远命不中。
+STOP = frozenset("""
+帮我 请你 麻烦 谢谢 一下 一个 一点 这个 那个 这样 那样 这些 那些 这种 那种
+怎么 什么 如何 为何 哪个 哪些 哪里 在哪 是否 可以 能否 能不 是不 有没 还有
+今天 明天 昨天 现在 目前 最近 刚才 之前 以后 然后 就是 还是 或者 但是 而且
+因为 所以 如果 那么 告诉 知道 记得 看看 找找 想到 觉得 应该 需要 帮我找
+怎么样 怎么办 为什么 什么样 有没有 是不是 能不能 可不可 我该 帮我找找
+好的 收到 明白 嗯嗯 哈哈 辛苦 没事 是的 对的 行吧 可以吧 干得好 谢啦
+""".split())
+
+
+def _score(entry: dict, qt) -> int:
+    """匹配分 = 整词分 + 碎片分（碎片封顶 2）。
+
+    整词分：≥3 字 2 分、2 字 1 分；问法词（STOP）与类型词（ASK）不计分。
+    碎片分：命中的 2 字滑窗最多记 2 分——不封顶的话，长 query 的碎片会把无关
+    条目堆成高分（真机：「周报规则」的碎片「报规」正好命中另一条记忆）。
+    阈值 1（v0.33.1）：一个实体词命中即算相关。旧规则「2 字词只值 1 分、低于 2 分
+    算噪音」把「周报」「通报」「简历」这类单主题提问整条判成噪音，真机表现就是
+    问「帮我做周报」注入 0 条，agent 只能自己去翻文件。
+    """
+    words, frags = qt
+    if not words and not frags:
         return 0
-    hay = (entry.get("t", "") + " " + " ".join(entry.get("tags", []))).lower()
-    return sum(2 if len(tok) >= 3 else 1 for tok in q if tok in hay)
+    # 只在开头 160 字 + 标签里匹配：碎片撞上 500 字长文的概率极高，
+    # 真机上「嗯嗯好的收到」就撞进了投简历规则（v0.33.1）。
+    hay = (entry.get("t", "")[:160] + " " + " ".join(entry.get("tags", []))).lower()
+
+    def usable(t: str) -> bool:
+        return t not in STOP and t not in ASK
+
+    strong = sum(2 if len(t) >= 3 else 1 for t in words if usable(t) and t in hay)
+    # 碎片只作「退路」：命中几个都只记 1 分。按命中个数累加会让长 query 里的
+    # 跨词碎片堆出高分（「周报规则」→ 碎片「周报」「报规」双命中，压过真正的
+    # 周报流水线），这不是相关度，是巧合。
+    weak = 1 if any(usable(t) and t in hay for t in frags) else 0
+    return strong + weak
 
 
-MIN_SCORE = 2
+MIN_SCORE = 1
+
+# 「类型词」：用户用它说明**要什么形态**的东西，而不是主题本身。
+# 「找一下周报规则」若让「规则」也参与打分，灌水命中的是「网申字数规则」，
+# 真正的「周报流水线」反被挤下去（v0.33.1 真机复现）。所以类型词不计分，
+# 只用来把 procedure/rule 类条目往上抬。
+ASK = frozenset({"规则", "流程", "步骤", "做法", "方法", "操作", "规程",
+                 "怎么做", "怎么弄", "如何做", "怎样做"})
+
+# 同等分数下的排序偏好：流程/规则类 > 流水账 fact。
+# 用户问「怎么做」要的是做法，不是「上周已出过一份」这样的历史记录。
+RULE_KINDS = frozenset({"procedure", "rule", "lesson"})
+LINE_MAX = 180              # 单条注入截断：500 字一条就把 800 预算吃满，后面的命中全被丢掉
 
 # v0.33 铁律 / 教训类记忆：确定性识别，不靠语义相似度。
 # 真机事故（2026-11-08）：11-03 入库的「检索历史素材的唯一正确路径」教训，
@@ -135,6 +192,7 @@ def warm(store, budget: int = DEFAULT_BUDGET, pool: int = POOL_MAX) -> Path:
             "id": n.node_id[:8],
             "t": n.content[:500],
             "tags": n.tags or [],
+            "kind": getattr(n, "kind", "") or "",
             "c": round(float(n.confidence), 3),
         } for n in top],
     }
@@ -177,21 +235,27 @@ def spawn_warm() -> None:
 def render(cache: dict, query: str, budget: int = DEFAULT_BUDGET,
            k: int = DEFAULT_K) -> str:
     """从缓存组装本轮注入块。命中不到 → 只给工作台；都没有 → 沉默。"""
-    q = tokens(query)
+    qt = split_tokens(query)
     entries = cache.get("entries") or []
     hits: List[dict] = []
-    if q:
+    if qt[0] or qt[1]:
         rule_ids = set(cache.get("rules") or [])
         scored = []
         for e in entries:
-            s = _score(e, q)
-            # 只在「本来就有命中」时给规则类加权：不相关的规则不占 token，
-            # 沉默契约与省 token 原则都不破。
-            if s and e.get("id") in rule_ids:
-                s += RULE_BONUS
-            scored.append((e, s))
-        hits = [e for e, s in sorted(scored, key=lambda x: (-x[1], -x[0].get("c", 0)))
-                if s >= MIN_SCORE][:k]
+            base = _score(e, qt)
+            if base < MIN_SCORE:
+                continue
+            # v0.33 契约原样保留：warm 时判定的「铁律/教训」保底名单，命中即加权，
+            # 不看 query 形态——那类记忆价值高、数量少，被普通记忆盖住就是事故。
+            # 今天新增的流程类偏好不放进这里，它只在「问做法」时作第二/第三维排序，
+            # 否则任何带主题词的提问都会被 procedure 压住（v0.33.1 踩到）。
+            bonus = RULE_BONUS if e.get("id") in rule_ids else 0
+            scored.append((e, base, bonus))
+        hits = [e for e, base, bonus in sorted(scored, key=lambda x: (
+            -x[1],
+            -x[2],
+            0 if x[0].get("kind") in RULE_KINDS else 1,
+            -x[0].get("c", 0)))][:k]
     wb = (cache.get("workbench") or "").strip()
     if not hits and not wb:
         return SILENCE
@@ -203,7 +267,10 @@ def render(cache: dict, query: str, budget: int = DEFAULT_BUDGET,
         lines.append(wb)
         used += len(wb)
     for e in hits:
-        line = f"- {e['t']}"
+        body = e.get("t", "")
+        if len(body) > LINE_MAX:               # 长条目截断保命，宁可多带几条线索
+            body = body[:LINE_MAX].rstrip() + "…"
+        line = f"- {body}"
         if used + len(line) > budget:
             break
         lines.append(line)
