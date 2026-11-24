@@ -380,15 +380,13 @@ membridge channel        # 通道身份 + 密钥指纹 + 各端心跳名册
 3. **发布本机记忆**：`membridge publish`。不传 `--passphrase`。
 4. **核对是否同一把钥匙**：`membridge channel` 里的「通道密钥: 指纹 xxxx」，
    各端应一致。
-5. **🔴 结果验收（验收责任在 AI，禁止让用户自己查）**：以上四步只证明"命令跑了"，
-   不证明"记忆真的同步了"。历史事故：autosync 空跑时返回码 0 还打印"没有需要发布的新记忆"，
-   多轮改版因此误报"修好了"。做完同步/修复/改版后，你必须**自己**拿结果证据复验并只给用户结论：
-   - ① 会话节点数：`python -c "import sqlite3;c=sqlite3.connect('~/.membridge/memory.db');print(c.execute(\"select count(*) from nodes where tags like '%session%'\").fetchone()[0])"`（应随时间涨）
-   - ② 云盘 outbox 有无新时间戳 `*.delta.enc.json`
-   - ③ `meta.last_publish_at` 是否接近当前
-   - 金标准：确认一条新会话已归档 → 等一个自动周期（≤15 分钟）→ 三查各自 +1。
-   - 交接卡/记忆说"已修复"仅作线索，必须用结果证据独立复核后才采信，不能自产合格证。
-   - 详细纪律见 `SKILL.md` 工作流约定与 CHANGELOG v0.33.3。
+5. **🔴 结果验收（责任在 AI，禁止让用户自查）**：前四步只证明"命令跑了"，不证明"记忆真同步了"
+   （历史事故：autosync 空跑返回码 0 还打印"没有需要发布的新记忆"，多轮误报"修好了"）。
+   做完同步/修复/改版，AI 自己拿证据复验、只给用户结论，贴实测数字：
+   - ① 会话数：`python -c "import sqlite3;c=sqlite3.connect('~/.membridge/memory.db');print(c.execute(\"select count(*) from nodes where tags like '%session%'\").fetchone()[0])"`（应随时间涨）
+   - ② outbox 有无新时间戳 `*.delta.enc.json`；③ `last_publish_at` 是否接近当前
+   - 金标准：确认新会话归档 → 等≤15 分钟周期 → 三查各 +1 才算真通（手动跑一次不算）
+   - 交接卡"已修复"仅作线索，独立复核后才采信。细则见 `SKILL.md` 工作流约定 / CHANGELOG v0.33.3。
 
 自行加解密时：按第二节派生 43 字符密钥，用它作 Fernet 口令；
 每包随机 16 字节盐并以 hex 写进信封的 `salt`；解密前先用自检串确认派生无误。
