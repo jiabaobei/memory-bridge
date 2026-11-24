@@ -2,6 +2,22 @@
 
 所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.33.2] - 2026-11-24
+
+### 计划任务每 15 分钟空跑：autosync 从不采集会话，自动同步形同虚设
+
+**真机事故（2026-11-24）**：用户报告「明明设置了自动同步和时间间隔，却从没实现」。查证：Windows 计划任务 `MemoryBridge AutoSync` 状态 Ready、每 15 分钟（PT15M）准时触发、结果码 0、电池也跑、错过补跑——任务本身完全正常。`sync_agent.run_autosync()` 也照常执行。病根在链路缺口：`autosync` 只对**已在库里的**记忆做 `delta_unsent` 并发布，而会话成果与工作日志从没进库（v0.33.0 的 `session-ingest` 要人手执行），于是每 15 分钟的输出永远是「没有需要发布的新记忆」——结果码 0、看起来一切正常，实际什么都没同步。这与 v0.29 证伪史里「上游摄入缺口导致自动同步变成空操作」是同一类病。
+
+**改动**
+- `sync_agent` 新增 `ingest_new_sessions(store, out)`：复用 `session_ingest.scan/index_line`，在 `run_autosync()` 发布前先采集新会话进库。沿用同一套写库约定——逐条按内容精确判重、隐私词照走 PAMS（`classify_scene`/`default_migration`）、只新增节点并重建语义/实体边、不改写既有记忆。
+- 采集异常用 try/except 包裹，只告警不阻断同步主流程（采集失败也要保证搬运照常）。
+- 采集带 `session`/`autosync` 标签，便于 `search --scope tag:session` 检索。
+
+**验证（真机）**
+- 隔离空库连跑两次：首次新增 155 条索引，第二次新增 0 / 判重跳过 155——判重幂等成立。
+- 主库实跑 `membridge autosync`（计划任务同款命令）：输出「会话采集：新增 1 条索引，判重跳过 154 条」→「检测到 1 条重要记忆：立即上云」→「自动同步完成（发布 1 个差分包）」，全链路打通。修复前这里只输出「没有需要发布的新记忆」。
+- 语法检查通过；新增函数导入正常；`test_sync_agent.py`/`test_v033.py` 因本机未装 pytest 未跑（沙箱 schtasks 黑名单亦阻断全量 runner），与既有环境限制一致。
+
 ## [0.33.1] - 2026-11-23
 
 ### 该注入的时候注入 0 条：两字主题词被当成噪音扔了

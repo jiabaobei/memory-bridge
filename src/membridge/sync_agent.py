@@ -15,15 +15,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Dict, List, Optional, Tuple
 
-from . import capabilities, dss
+from . import capabilities, dss, session_ingest
 from . import channel as _channel
 from .dss import Delta
 from .embeddings import embedder_identity
 from .node import MemoryNode
+from .privacy import classify_scene, default_migration
+from .san import build_edges, build_entity_edges
 from .store import MemoryStore, default_db_path
 from .transport import FolderTransport
 from .vault import load_passphrase
@@ -86,6 +89,58 @@ def _folder_round(netdisk: str, out, db_path: Optional[str] = None) -> None:
         out(f"网盘双向：{detail}")
 
 
+def ingest_new_sessions(store, out=print) -> int:
+    """v0.33.2：autosync 前先把新会话采进库（补 Ingest 闭环）。
+
+    真机事故（2026-11-24）：计划任务每 15 分钟准时跑、结果码 0，但用户
+    「从没实现自动同步」——根因是 autosync 只搬运已在库里的记忆，会话与
+    日志从不进库，于是每 15 分钟空跑、输出「没有需要发布的新记忆」。
+    session-ingest 已能采集，但要人手执行；把它并进 autosync 才真正零点击。
+
+    与 cmd_session_ingest 同一套写库约定：逐条按内容精确判重、隐私词照走
+    PAMS、只新增节点并重建边，不改写任何既有记忆。任何异常都不阻断同步。
+    """
+    try:
+        root = session_ingest.default_projects_dir()
+        if not root.exists():
+            out(f"会话采集：归档目录不存在，跳过（{root}）")
+            return 0
+        entries = session_ingest.scan(root)
+        if not entries:
+            out("会话采集：没有可索引的会话")
+            return 0
+        embedder = capabilities.best_embedder()
+        if not store._get_meta("embedder_id"):
+            store._set_meta("embedder_id",
+                            json.dumps(embedder_identity(embedder), ensure_ascii=False))
+        added = dup = 0
+        for entry in entries:
+            content = session_ingest.index_line(entry)
+            if store.conn.execute("SELECT 1 FROM nodes WHERE content = ?",
+                                  (content,)).fetchone():
+                dup += 1
+                continue
+            node = MemoryNode(
+                content=content,
+                embedding=embedder.embed(content),
+                tags=["session", "autosync"],
+                scene=classify_scene(content),
+                device=store.device_name,
+                migration=default_migration(content),
+                kind="",
+            )
+            with store.transaction():
+                store.add(node)
+                build_edges(store, embedder, only_new=node)
+                build_entity_edges(store, node)
+            added += 1
+        out(f"会话采集：新增 {added} 条索引，判重跳过 {dup} 条")
+        return added
+    except Exception as exc:  # 采集失败绝不阻断同步主流程
+        out(f"⚠️ 会话采集失败（不影响同步）：{type(exc).__name__}: {exc}")
+        return 0
+
+
 def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = None,
                  out=print) -> int:
     store = MemoryStore(store_path or default_db_path())
@@ -93,6 +148,7 @@ def run_autosync(store_path: Optional[str] = None, passphrase: Optional[str] = N
     if not netdisk:
         out("⚠️ 尚未配置云盘通道：请先运行 membridge init")
         return 2
+    ingest_new_sessions(store, out)  # v0.33.2：先采集新会话，再搬运
     _folder_round(netdisk, out, store.path)
     # v0.30.3：通道密钥压过一切本机历史（显式参数除外）。
     # 事故链（同一个病连修两次还没修干净）：
